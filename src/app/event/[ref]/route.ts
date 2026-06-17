@@ -1,17 +1,30 @@
 import type { NextRequest } from "next/server";
 import { json, preflight } from "@/lib/http";
-import { getMatch, optionsFor } from "@/lib/rooms";
+import { getMatch, MAX_GOALS, MAX_MINUTE } from "@/lib/rooms";
 
 export const dynamic = "force-dynamic";
 
-// GET /event/{ref} — the roster/options plus advisory dates and labels.
+// GET /event/{ref} — the labels, the structured pick schema, advisory dates.
 export async function GET(_req: NextRequest, { params }: { params: { ref: string } }) {
   const m = getMatch(params.ref);
   if (!m) return json({ error: "unknown event ref" }, 404);
 
   return json({
     ref: m.ref,
-    options: optionsFor(m).map((o) => ({ id: o.id, label: o.label, points: o.points })),
+    // Players predict a scoreline plus the minute of every goal.
+    pick: {
+      kind: "scoreline-timed",
+      fields: {
+        homeGoals: { min: 0, max: MAX_GOALS },
+        awayGoals: { min: 0, max: MAX_GOALS },
+        homeGoalMinutes: { count: "homeGoals", min: 1, max: MAX_MINUTE },
+        awayGoalMinutes: { count: "awayGoals", min: 1, max: MAX_MINUTE },
+      },
+    },
+    scoring: {
+      summary: "Closest prediction wins: right outcome first, then closest scoreline, then closest goal minutes.",
+      tiers: ["outcome", "score", "timing"],
+    },
     expectedLockAt: m.kickoffISO,
     expectedResolveAt: m.kickoffISO, // result known shortly after full time
     labels: {

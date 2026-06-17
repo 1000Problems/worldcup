@@ -1,26 +1,30 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-type OutcomeId = "ESP" | "DRAW" | "KSA";
+const MAX_GOALS = 20;
+
+interface Team {
+  code: string;
+  name: string;
+}
 
 interface EventData {
   ref: string;
-  options: { id: OutcomeId; label: string; points: number }[];
   expectedLockAt: string;
+  scoring?: { summary?: string };
   labels: {
     title: string;
     competition: string;
     stage: string;
     venue: string;
-    home: { code: string; name: string };
-    away: { code: string; name: string };
+    home: Team;
+    away: Team;
   };
 }
 
 type Phase = "open" | "locked" | "closed";
 
-// A Rooms session, however it reaches us (query param or postMessage).
 interface Session {
   playerId?: string;
   displayName?: string;
@@ -33,8 +37,6 @@ interface MsgEntry {
   data: unknown;
 }
 
-// Pull session-ish fields out of an arbitrary object, checking the shapes a
-// host might plausibly use. Non-destructive: returns only what it finds.
 function extractSession(obj: unknown): Session {
   const out: Session = {};
   if (!obj || typeof obj !== "object") return out;
@@ -75,8 +77,13 @@ function useCountdown(targetISO?: string) {
   return d > 0 ? `${d}d ${h}h ${m}m to kickoff` : `${h}h ${m}m ${sec}s to kickoff`;
 }
 
+function resize(arr: string[], n: number): string[] {
+  const next = arr.slice(0, n);
+  while (next.length < n) next.push("");
+  return next;
+}
+
 export default function RoomPage() {
-  // ---- environment the iframe can observe -------------------------------
   const env = useMemo(() => {
     if (typeof window === "undefined") {
       return { href: "", ref: "match-38", query: {} as Record<string, string>, referrer: "", inIframe: false };
@@ -95,17 +102,21 @@ export default function RoomPage() {
 
   const [event, setEvent] = useState<EventData | null>(null);
   const [phase, setPhase] = useState<Phase>("open");
-  const [selected, setSelected] = useState<OutcomeId | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // ---- everything we learn from the Rooms host --------------------------
+  // session / host probe
   const [session, setSession] = useState<Session>(() => extractSession(env.query));
   const [messages, setMessages] = useState<MsgEntry[]>([]);
   const [lastSent, setLastSent] = useState<unknown>(null);
-  const sessionRef = useRef(session);
-  sessionRef.current = session;
 
-  // Listen for any postMessage from the host, log it, and harvest session fields.
+  // pick builder
+  const [homeGoals, setHomeGoals] = useState(0);
+  const [awayGoals, setAwayGoals] = useState(0);
+  const [homeMinutes, setHomeMinutes] = useState<string[]>([]);
+  const [awayMinutes, setAwayMinutes] = useState<string[]>([]);
+  const [submitted, setSubmitted] = useState(false);
+  const [validateMsg, setValidateMsg] = useState<string | null>(null);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     function onMsg(e: MessageEvent) {
@@ -114,11 +125,10 @@ export default function RoomPage() {
       );
       const found = extractSession(e.data);
       if (found.playerId || found.displayName || found.avatarToken) {
-        setSession((prev) => ({ ...found, ...prev, ...found }));
+        setSession((prev) => ({ ...prev, ...found }));
       }
     }
     window.addEventListener("message", onMsg);
-    // Announce readiness so a host that waits for the iframe will send the session.
     if (window.parent !== window) {
       for (const type of ["rooms:ready", "ready", "rooms:hello"]) {
         try {
@@ -150,25 +160,128 @@ export default function RoomPage() {
   const countdown = useCountdown(event?.expectedLockAt);
   const locked = phase !== "open";
   const name = session.displayName;
+  const home = event?.labels.home;
+  const away = event?.labels.away;
 
-  function choose(id: OutcomeId) {
+  function changeGoals(side: "home" | "away", delta: number) {
     if (locked) return;
-    setSelected(id);
-    const payload = { type: "rooms:pick", ref: env.ref, pick: id, playerId: session.playerId };
+    setSubmitted(false);
+    setValidateMsg(null);
+    if (side === "home") {
+      const g = Math.max(0, Math.min(MAX_GOALS, homeGoals + delta));
+      setHomeGoals(g);
+      setHomeMinutes((prev) => resize(prev, g));
+    } else {
+      const g = Math.max(0, Math.min(MAX_GOALS, awayGoals + delta));
+      setAwayGoals(g);
+      setAwayMinutes((prev) => resize(prev, g));
+    }
+  }
+
+  function setMinute(side: "home" | "away", i: number, v: string) {
+    setSubmitted(false);
+    setValidateMsg(null);
+    const clean = v.replace(/[^0-9]/g, "").slice(0, 3);
+    (side === "home" ? setHomeMinutes : setAwayMinutes)((prev) => {
+      const next = [...prev];
+      next[i] = clean;
+      return next;
+    });
+  }
+
+  const outcomeLabel =
+    !home || !away
+      ? ""
+      : homeGoals > awayGoals
+        ? `${home.name} win`
+        : homeGoals < awayGoals
+          ? `${away.name} win`
+          : "Draw";
+
+  function minutesComplete(mins: string[]) {
+    return mins.every((s) => {
+      const n = parseInt(s, 10);
+      return Number.isInteger(n) && n >= 1 && n <= 120;
+    });
+  }
+  const complete = minutesComplete(homeMinutes) && minutesComplete(awayMinutes);
+
+  async function submit() {
+    if (locked || !complete) return;
+    const pick = {
+      homeGoals,
+      awayGoals,
+      homeGoalMinutes: homeMinutes.map((s) => parseInt(s, 10)),
+      awayGoalMinutes: awayMinutes.map((s) => parseInt(s, 10)),
+    };
+    try {
+      const res = await fetch("/validate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ event: env.ref, pick }),
+      }).then((r) => r.json());
+      if (!res.valid) {
+        setValidateMsg(res.reason ?? "Invalid pick.");
+        return;
+      }
+    } catch {
+      setValidateMsg("Could not reach the validator.");
+      return;
+    }
+    const payload = { type: "rooms:pick", ref: env.ref, pick, playerId: session.playerId };
     setLastSent(payload);
     if (typeof window !== "undefined" && window.parent !== window) {
       window.parent.postMessage(payload, "*");
     }
+    setSubmitted(true);
+    setValidateMsg(null);
+  }
+
+  function GoalRow({ side, team, goals, mins }: { side: "home" | "away"; team: Team; goals: number; mins: string[] }) {
+    return (
+      <div className="goalrow">
+        <div className={`crest ${side === "home" ? "esp" : "ksa"}`}>{team.code}</div>
+        <div className="goalrow-main">
+          <div className="goalrow-top">
+            <span className="team-name">{team.name}</span>
+            <div className="stepper">
+              <button className="step" disabled={locked} onClick={() => changeGoals(side, -1)} aria-label="minus">
+                −
+              </button>
+              <span className="goalcount">{goals}</span>
+              <button className="step" disabled={locked} onClick={() => changeGoals(side, +1)} aria-label="plus">
+                +
+              </button>
+            </div>
+          </div>
+          {goals > 0 && (
+            <div className="minutes">
+              {Array.from({ length: goals }).map((_, i) => (
+                <input
+                  key={i}
+                  className="minput"
+                  inputMode="numeric"
+                  placeholder={`#${i + 1}`}
+                  value={mins[i] ?? ""}
+                  disabled={locked}
+                  onChange={(e) => setMinute(side, i, e.target.value)}
+                />
+              ))}
+              <span className="minlabel">goal minutes</span>
+            </div>
+          )}
+        </div>
+      </div>
+    );
   }
 
   return (
     <main className="wrap">
-      {/* greeting */}
       <p className="hello">{name ? `Hello, ${name}` : "Hello — waiting for Rooms sign-in…"}</p>
 
       {error ? (
         <p className="status">{error}</p>
-      ) : !event ? (
+      ) : !event || !home || !away ? (
         <p className="status">Loading…</p>
       ) : (
         <>
@@ -177,54 +290,61 @@ export default function RoomPage() {
           </p>
           <div className="match">
             <div className="team">
-              <div className="crest esp">{event.labels.home.code}</div>
-              <div className="team-name">{event.labels.home.name}</div>
+              <div className="crest esp">{home.code}</div>
+              <div className="team-name">{home.name}</div>
             </div>
             <div className="vs">VS</div>
             <div className="team">
-              <div className="crest ksa">{event.labels.away.code}</div>
-              <div className="team-name">{event.labels.away.name}</div>
+              <div className="crest ksa">{away.code}</div>
+              <div className="team-name">{away.name}</div>
             </div>
           </div>
           <p className="meta">{event.labels.venue}</p>
           <p className="countdown">{phase === "closed" ? "Full time" : countdown}</p>
 
-          <p className="q">Who wins{name ? `, ${name}` : ""}?</p>
-          <div className="options">
-            {event.options.map((o) => {
-              const dotClass = o.id === "ESP" ? "esp" : o.id === "KSA" ? "ksa" : "draw";
-              return (
-                <button
-                  key={o.id}
-                  className={`opt${selected === o.id ? " selected" : ""}`}
-                  disabled={locked}
-                  onClick={() => choose(o.id)}
-                >
-                  <span style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <span className={`dot ${dotClass}`} />
-                    {o.label}
-                  </span>
-                  <span className="pts">+{o.points} pts</span>
-                </button>
-              );
-            })}
+          <p className="q">
+            Predict the final score{name ? `, ${name}` : ""} — and when each goal is scored.
+          </p>
+
+          <GoalRow side="home" team={home} goals={homeGoals} mins={homeMinutes} />
+          <GoalRow side="away" team={away} goals={awayGoals} mins={awayMinutes} />
+
+          <div className="preview">
+            <span className="preview-score">
+              {home.name} {homeGoals} – {awayGoals} {away.name}
+            </span>
+            <span className="preview-outcome">{outcomeLabel}</span>
           </div>
+
+          {!locked && (
+            <button className="submit" disabled={!complete} onClick={submit}>
+              {submitted ? "Pick locked in ✓ — tap to update" : "Submit prediction"}
+            </button>
+          )}
+
           <div className={`status${locked ? " locked" : ""}`}>
             {phase === "closed"
               ? "This match is resolved."
               : locked
                 ? "Picks are locked — kickoff has passed."
-                : selected
-                  ? "Pick submitted. Change it any time before kickoff."
-                  : "Tap your call. You can change it until kickoff."}
+                : validateMsg
+                  ? validateMsg
+                  : submitted
+                    ? "Sent to the room. Change it any time before kickoff."
+                    : complete
+                      ? "Looks good — submit your prediction."
+                      : homeGoals + awayGoals > 0
+                        ? "Fill in the minute of each goal."
+                        : "Set the score, then the minute of each goal."}
           </div>
+
+          {event.scoring?.summary && <p className="scoring-note">{event.scoring.summary}</p>}
         </>
       )}
 
       {/* ---- Rooms integration probe ------------------------------------- */}
       <section className="probe">
         <h2 className="probe-h">Rooms connection — debug</h2>
-
         <div className="kv">
           <span>Embedded in iframe</span>
           <code>{String(env.inIframe)}</code>
@@ -277,16 +397,12 @@ export default function RoomPage() {
             none yet — if the host pushes the session via postMessage, it will appear here live.
           </p>
         ) : (
-          <pre className="log">
-            {messages
-              .map((m) => `[${m.t}] from ${m.origin}\n${safeJson(m.data)}`)
-              .join("\n\n")}
-          </pre>
+          <pre className="log">{messages.map((m) => `[${m.t}] from ${m.origin}\n${safeJson(m.data)}`).join("\n\n")}</pre>
         )}
       </section>
 
       <p className="footer">
-        Higher reward for the bolder call — a Saudi Arabia upset pays most.
+        Closest call wins: right result first, then closest score, then closest goal minutes.
         <br />A 1000Problems room for the Rooms platform.
       </p>
     </main>

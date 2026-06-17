@@ -1,8 +1,9 @@
 # World Cup Match Predictor — a Rooms room
 
-A third-party **room** (game) for the Rooms platform. Players predict the outcome
-of a single World Cup match — home win, draw, or away win — before kickoff. Seeded
-with **match-38: Spain vs Saudi Arabia, Group H, 21 Jun 2026, Atlanta**.
+A third-party **room** (game) for the Rooms platform. Players predict the full
+**scoreline plus the minute of every goal** of a single World Cup match before
+kickoff, ranked by a magnitude-banded cascade. Seeded with **match-38: Spain vs
+Saudi Arabia, Group H, 21 Jun 2026, Atlanta**.
 
 The whole platform contract lives in `PROMPT-new-room-project.md`. Rooms owns
 identity, the pick store, lock enforcement, and the audited scoreboard. This
@@ -47,16 +48,20 @@ No new code, no new deploy beyond shipping the data.
 | Method | Path | Body | Returns |
 |--------|------|------|---------|
 | GET  | `/contract` | — | Manifest |
-| GET  | `/event/{ref}` | — | EventDef (options + labels + lock time) |
+| GET  | `/event/{ref}` | — | EventDef (pick schema + labels + lock time) |
 | POST | `/validate` | `{ event, pick }` | `{ valid, reason? }` |
 | GET  | `/phase/{ref}` | — | `{ phase, status }` |
 | POST | `/resolve` | `{ ref }` | ResultDef \| null |
 | POST | `/score` | `{ result, picks[] }` | ScoreBreakdown[] (PURE) |
 | POST | `/rewards` | `{ result, standings }` | RewardProposal |
-| POST | `/admin/resolve` | `{ ref, homeGoals, awayGoals }` + Bearer token | ResultDef |
+| POST | `/admin/resolve` | `{ ref, homeGoals, awayGoals, homeGoalMinutes[], awayGoalMinutes[] }` + Bearer token | ResultDef |
 
-Pick ids: `ESP` (Spain win, +2), `DRAW` (+3), `KSA` (Saudi win, +5). Points reward
-the bolder correct call. `/score` is pure: correct outcome → its point value, else 0.
+Pick shape: `{ homeGoals, awayGoals, homeGoalMinutes[], awayGoalMinutes[] }` (minute
+arrays length = their goal count, each 1..120). `/score` is pure and ranks by a
+cascade packed into one `points` scalar: `outcomeBand (1,000,000 if right
+winner/draw) + scoreBand (0..9,999, exact tops it) + timingBand (0..99, closest
+goal minutes)`. Magnitude-separated so a lower tier can't overflow a higher one;
+identical-perfect predictions tie (shared win). Constants live in `lib/rooms.ts`.
 
 ## Auth model
 
@@ -119,9 +124,15 @@ changing the scorer, confirm purity by diffing two identical `/score` calls.
 
 ## Pending work
 
-`TASK-cascade-scoring.md` specifies an unimplemented rebuild: replace the
-outcome-only pick with a structured scoreline + goal-minute prediction, scored by
-a magnitude-banded cascade (`outcomeBand + scoreBand + timingBand`) packed into
-Rooms' single `points` scalar. The code today is still outcome-only (`ESP`/`DRAW`/
-`KSA`); this doc describes the **current** state, not that task. If you implement it,
-update this file's pick-ids and scoring sections.
+- **Cascade scoring — DONE.** `TASK-cascade-scoring.md` is implemented: structured
+  scoreline + goal-minute pick, band-encoded pure scorer, bespoke builder UI.
+  Verified by the worked example (exact+perfect-timing > exact > right-outcome >
+  wrong-outcome) and a purity diff.
+- **Host→ref routing (`ARCHITECTURE.md`).** `/contract` and the endpoints still
+  default the ref; make them resolve the match from the subdomain before a second
+  game URL goes live.
+- **Identity from Rooms.** The renderer probe (debug panel in `page.tsx`) shows
+  Rooms isn't yet handing the iframe a session (no query, no postMessage). Wire the
+  real channel once Rooms exposes it; the probe already harvests query + postMessage.
+- **GitHub CI.** PAT is expired; deploys currently go out via Vercel CLI from local
+  source. Refresh the token and connect the repo for push-to-deploy.

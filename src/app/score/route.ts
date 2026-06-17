@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { json, preflight } from "@/lib/http";
-import { scorePicks, type Pick, type ResultDef } from "@/lib/rooms";
+import { scorePicks, type PlayerPick, type ResultDef } from "@/lib/rooms";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
   }
 
   const result = body.result as ResultDef;
-  const picks = body.picks as Pick[];
+  const picks = body.picks as PlayerPick[];
   return json(scorePicks(result, picks));
 }
 

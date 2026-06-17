@@ -1,12 +1,18 @@
 // ---------------------------------------------------------------------------
 // World Cup Match Predictor — core game logic for the Rooms contract.
 //
-// The platform (Rooms) owns identity, the pick store, lock enforcement, and the
-// audited scoreboard. This module is the seam: it defines the events, validates
-// picks, signals phase, holds the resolved result, and scores — purely.
+// Players predict a full scoreline plus the minute of every goal. Ranking is a
+// three-tier cascade, encoded into Rooms' single `points` scalar via
+// magnitude-separated bands so a lower tier can never overflow a higher one:
+//
+//   1. outcome   — right winner/draw beats wrong, always          (W_OUTCOME)
+//   2. score     — closeness of the scoreline; exact tops the tier (0..9999)
+//   3. timing    — closeness of the goal minutes                  (0..99)
+//
+// Rooms re-runs /score to audit the board, so scorePicks() must stay pure.
 // ---------------------------------------------------------------------------
 
-export type OutcomeId = "ESP" | "DRAW" | "KSA";
+export type Outcome = "HOME" | "DRAW" | "AWAY";
 
 export interface Team {
   code: string; // FIFA tricode
@@ -23,15 +29,8 @@ export interface MatchDef {
   kickoffISO: string; // UTC kickoff; lock fires here
 }
 
-export interface Option {
-  id: OutcomeId;
-  label: string;
-  points: number; // points a correct call of this outcome is worth (pure, constant)
-}
-
 // --- Event registry --------------------------------------------------------
 // One deployed service answers for every fixture; the match is selected by ref.
-// Seeded with match-38. Adding the rest of the tournament is data, not code.
 
 const MATCHES: Record<string, MatchDef> = {
   "match-38": {
@@ -46,32 +45,144 @@ const MATCHES: Record<string, MatchDef> = {
   },
 };
 
-// Outcome options for a single match. Points reward difficulty: backing the
-// favourite (Spain) is worth less than calling a draw or a Saudi upset.
-export function optionsFor(m: MatchDef): Option[] {
-  return [
-    { id: "ESP", label: `${m.home.name} win`, points: 2 },
-    { id: "DRAW", label: "Draw", points: 3 },
-    { id: "KSA", label: `${m.away.name} win`, points: 5 },
-  ];
-}
-
 export function getMatch(ref: string): MatchDef | null {
   return MATCHES[ref] ?? null;
 }
 
-// --- Result store ----------------------------------------------------------
-// Resolution is manual for now (admin POST). In-memory is fine: Rooms owns the
-// durable pick store and re-runs the pure scorer. A cold start just clears the
-// posted result, which the admin re-posts. Swap for Neon/KV in production.
+export function outcomeOf(homeGoals: number, awayGoals: number): Outcome {
+  return homeGoals > awayGoals ? "HOME" : homeGoals < awayGoals ? "AWAY" : "DRAW";
+}
+
+// --- Pick & result shapes --------------------------------------------------
+
+export interface Pick {
+  homeGoals: number; // 0..MAX_GOALS
+  awayGoals: number;
+  homeGoalMinutes: number[]; // length === homeGoals, each 1..MAX_MINUTE
+  awayGoalMinutes: number[]; // length === awayGoals
+}
+
+export interface PlayerPick {
+  playerId: string;
+  pick: Pick;
+}
 
 export interface ResultDef {
   ref: string;
-  outcome: OutcomeId;
   homeGoals: number;
   awayGoals: number;
+  outcome: Outcome;
+  homeGoalMinutes: number[];
+  awayGoalMinutes: number[];
   final: true;
 }
+
+export interface ScoreBreakdown {
+  playerId: string;
+  points: number;
+  detail: {
+    outcome: { picked: Outcome; actual: Outcome; correct: boolean };
+    score: { picked: string; actual: string; exact: boolean; gdMatch: boolean; totalMatch: boolean };
+    timing: { comparable: boolean; error: number };
+    bands: { outcome: number; score: number; timing: number };
+  };
+}
+
+// --- Scoring constants (all live here; the scorer is pure) ------------------
+
+export const MAX_GOALS = 20;
+export const MAX_MINUTE = 120;
+
+const W_OUTCOME = 1_000_000; // tier 1 dominates everything below
+const SCORE_CAP = 9_999; // tier 2 ceiling
+const TIMING_CAP = 99; // tier 3 ceiling
+
+// --- Validation (pure) -----------------------------------------------------
+
+export function validatePick(_m: MatchDef, pick: unknown): { valid: boolean; reason?: string } {
+  if (!pick || typeof pick !== "object") return { valid: false, reason: "pick must be an object" };
+  const p = pick as Record<string, unknown>;
+  const { homeGoals, awayGoals, homeGoalMinutes, awayGoalMinutes } = p;
+
+  for (const [label, g] of [["homeGoals", homeGoals], ["awayGoals", awayGoals]] as const) {
+    if (!Number.isInteger(g) || (g as number) < 0 || (g as number) > MAX_GOALS) {
+      return { valid: false, reason: `${label} must be an integer 0..${MAX_GOALS}` };
+    }
+  }
+  const checks: [string, unknown, number][] = [
+    ["homeGoalMinutes", homeGoalMinutes, homeGoals as number],
+    ["awayGoalMinutes", awayGoalMinutes, awayGoals as number],
+  ];
+  for (const [label, mins, count] of checks) {
+    if (!Array.isArray(mins)) return { valid: false, reason: `${label} must be an array` };
+    if (mins.length !== count) {
+      return { valid: false, reason: `${label} must have exactly ${count} entr${count === 1 ? "y" : "ies"}` };
+    }
+    for (const mm of mins) {
+      if (!Number.isInteger(mm) || (mm as number) < 1 || (mm as number) > MAX_MINUTE) {
+        return { valid: false, reason: `${label} entries must be integers 1..${MAX_MINUTE}` };
+      }
+    }
+  }
+  return { valid: true };
+}
+
+// --- Pure cascade scorer ---------------------------------------------------
+
+export function scorePicks(result: ResultDef, picks: PlayerPick[]): ScoreBreakdown[] {
+  return picks.map(({ playerId, pick }) => {
+    // Tier 1 — outcome
+    const picked = outcomeOf(pick.homeGoals, pick.awayGoals);
+    const correct = picked === result.outcome;
+    const outcomeBand = correct ? W_OUTCOME : 0;
+
+    // Tier 2 — score accuracy
+    const homeErr = Math.abs(pick.homeGoals - result.homeGoals);
+    const awayErr = Math.abs(pick.awayGoals - result.awayGoals);
+    const exact = homeErr === 0 && awayErr === 0;
+    const gdMatch = pick.homeGoals - pick.awayGoals === result.homeGoals - result.awayGoals;
+    const totalMatch = pick.homeGoals + pick.awayGoals === result.homeGoals + result.awayGoals;
+    const scoreBand = Math.min(
+      SCORE_CAP,
+      (exact ? 4000 : 0) +
+        (gdMatch ? 2000 : 0) +
+        (totalMatch ? 1000 : 0) +
+        Math.max(0, 2000 - 250 * (homeErr + awayErr)),
+    );
+
+    // Tier 3 — goal-minute closeness (only when goal counts match reality)
+    const predMin = [...pick.homeGoalMinutes, ...pick.awayGoalMinutes].sort((a, b) => a - b);
+    const actMin = [...result.homeGoalMinutes, ...result.awayGoalMinutes].sort((a, b) => a - b);
+    const comparable = predMin.length === actMin.length;
+    let timingError = 0;
+    if (comparable) {
+      for (let i = 0; i < predMin.length; i++) timingError += Math.abs(predMin[i] - actMin[i]);
+    }
+    const timingBand = comparable ? Math.max(0, TIMING_CAP - timingError) : 0;
+
+    return {
+      playerId,
+      points: outcomeBand + scoreBand + timingBand,
+      detail: {
+        outcome: { picked, actual: result.outcome, correct },
+        score: {
+          picked: `${pick.homeGoals}-${pick.awayGoals}`,
+          actual: `${result.homeGoals}-${result.awayGoals}`,
+          exact,
+          gdMatch,
+          totalMatch,
+        },
+        timing: { comparable, error: comparable ? timingError : -1 },
+        bands: { outcome: outcomeBand, score: scoreBand, timing: timingBand },
+      },
+    };
+  });
+}
+
+// --- Result store ----------------------------------------------------------
+// Manual resolution (admin POST). In-memory is fine: Rooms owns the durable
+// pick store and re-runs the pure scorer. A cold start just clears the posted
+// result, which the admin re-posts. Swap for Neon/Vercel KV in production.
 
 const results = new Map<string, ResultDef>();
 
@@ -79,63 +190,27 @@ export function getResult(ref: string): ResultDef | null {
   return results.get(ref) ?? null;
 }
 
-export function setResult(ref: string, homeGoals: number, awayGoals: number): ResultDef {
-  const outcome: OutcomeId =
-    homeGoals > awayGoals ? "ESP" : homeGoals < awayGoals ? "KSA" : "DRAW";
-  const result: ResultDef = { ref, outcome, homeGoals, awayGoals, final: true };
+export function setResult(
+  ref: string,
+  homeGoals: number,
+  awayGoals: number,
+  homeGoalMinutes: number[],
+  awayGoalMinutes: number[],
+): ResultDef {
+  const result: ResultDef = {
+    ref,
+    homeGoals,
+    awayGoals,
+    outcome: outcomeOf(homeGoals, awayGoals),
+    homeGoalMinutes,
+    awayGoalMinutes,
+    final: true,
+  };
   results.set(ref, result);
   return result;
 }
 
-// --- Pure scoring ----------------------------------------------------------
-// (picks, result) → points. No IO, no clock, no randomness — Rooms re-runs this
-// to audit the board, so identical inputs must always yield identical outputs.
-
-export interface Pick {
-  playerId: string;
-  pick: OutcomeId;
-}
-
-export interface ScoreBreakdown {
-  playerId: string;
-  points: number;
-  detail: { picked: OutcomeId; actual: OutcomeId; hit: boolean };
-}
-
-export function pointsForOutcome(outcome: OutcomeId): number {
-  switch (outcome) {
-    case "ESP":
-      return 2;
-    case "DRAW":
-      return 3;
-    case "KSA":
-      return 5;
-  }
-}
-
-export function scorePicks(result: ResultDef, picks: Pick[]): ScoreBreakdown[] {
-  return picks.map(({ playerId, pick }) => {
-    const hit = pick === result.outcome;
-    return {
-      playerId,
-      points: hit ? pointsForOutcome(result.outcome) : 0,
-      detail: { picked: pick, actual: result.outcome, hit },
-    };
-  });
-}
-
-// --- Validation (pure) -----------------------------------------------------
-
-export function validatePick(m: MatchDef, pick: unknown): { valid: boolean; reason?: string } {
-  const ids = optionsFor(m).map((o) => o.id);
-  if (typeof pick !== "string") return { valid: false, reason: "pick must be a string" };
-  if (!ids.includes(pick as OutcomeId)) {
-    return { valid: false, reason: `pick must be one of ${ids.join(", ")}` };
-  }
-  return { valid: true };
-}
-
-// --- Phase (clock-aware; this endpoint is allowed to read the clock) --------
+// --- Phase (clock-aware; /phase may read the clock, /score may not) ---------
 
 export type Phase = "open" | "locked" | "closed";
 

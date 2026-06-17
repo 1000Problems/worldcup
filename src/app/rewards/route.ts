@@ -9,23 +9,31 @@ interface Standing {
   points: number;
 }
 
+// Correct outcome contributes the dominant band (>= 1,000,000), so any positive
+// points up there means the player called the result right.
+const CORRECT_OUTCOME_FLOOR = 1_000_000;
+
 // POST /rewards { result, standings } → RewardProposal. Advisory only — Rooms
-// validates, caps, and mints. We propose a trophy, a renown bonus, and a
-// "called-it" badge for everyone who got the result right.
+// validates, caps, and mints. Trophy goes to everyone tied at the top score
+// (shared win); a "called-it" badge to every correct-outcome player.
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
   const result = body?.result as ResultDef | undefined;
   const standings = (body?.standings as Standing[] | undefined) ?? [];
 
-  const winners = standings.filter((s) => s.points > 0);
+  const top = standings.reduce((max, s) => Math.max(max, s.points), 0);
+  const winners = top > 0 ? standings.filter((s) => s.points === top) : [];
+  const calledIt = standings.filter((s) => s.points >= CORRECT_OUTCOME_FLOOR);
 
   return json({
     trophy: { publicLabel: "Oracle of Atlanta", iconToken: "soccer" },
     renownProposal: {
       bonus: 10,
-      reason: result ? `Called the ${result.homeGoals}-${result.awayGoals} result` : "Correct call",
+      reason: result ? `Closest call on the ${result.homeGoals}-${result.awayGoals} result` : "Closest call",
     },
-    badges: winners.map((s) => ({ playerId: s.playerId, code: "called-it" })),
+    // Advisory: Rooms decides how the shared trophy is granted across ties.
+    winners: winners.map((s) => s.playerId),
+    badges: calledIt.map((s) => ({ playerId: s.playerId, code: "called-it" })),
   });
 }
 

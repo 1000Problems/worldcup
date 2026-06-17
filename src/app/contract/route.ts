@@ -19,7 +19,12 @@ export async function GET(req: NextRequest) {
     // canonical: one real-world match is shared by many rooms (the F1 model).
     // The specific match is selected by the event ref.
     roomShape: { instancing: "canonical", minPlayers: 1, maxPlayers: 100000 },
-    pickSchema: { kind: "single-select", options: "from-event" },
+    // Composite pick: a scoreline plus the minute of every goal. Not a tier-1
+    // primitive, so the renderer is bespoke and Rooms stores the pick opaquely.
+    pickSchema: {
+      kind: "scoreline-timed",
+      fields: ["homeGoals", "awayGoals", "homeGoalMinutes", "awayGoalMinutes"],
+    },
     capabilities: {
       renderer: "bespoke",
       rendererUrl: `${origin}/`,
