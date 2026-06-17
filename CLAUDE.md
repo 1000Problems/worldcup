@@ -104,3 +104,24 @@ npm run dev          # http://localhost:3000
 curl localhost:3000/contract
 curl localhost:3000/event/match-38
 ```
+
+## Build & verify
+
+```bash
+npm run build        # next build — the canonical check; must pass with zero type/lint errors
+npm run lint         # next lint
+npm start            # serve a production build; set ADMIN_TOKEN to exercise /admin/resolve
+```
+
+There is **no test framework** in this repo. Verification is `npm run build` plus
+curling the endpoints (e.g. the worked example in `TASK-cascade-scoring.md`). When
+changing the scorer, confirm purity by diffing two identical `/score` calls.
+
+## Pending work
+
+`TASK-cascade-scoring.md` specifies an unimplemented rebuild: replace the
+outcome-only pick with a structured scoreline + goal-minute prediction, scored by
+a magnitude-banded cascade (`outcomeBand + scoreBand + timingBand`) packed into
+Rooms' single `points` scalar. The code today is still outcome-only (`ESP`/`DRAW`/
+`KSA`); this doc describes the **current** state, not that task. If you implement it,
+update this file's pick-ids and scoring sections.
