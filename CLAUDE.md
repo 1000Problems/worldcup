@@ -65,16 +65,21 @@ identical-perfect predictions tie (shared win). Constants live in `lib/rooms.ts`
 
 ## Auth model
 
-- **Players**: "Login with Rooms" — the host signs them in and hands a signed
-  session token (`playerId`, `displayName`, `avatarToken`). We do not build login.
-  For early dev a stubbed player is fine; the UI hands picks to the host via
-  `postMessage({ type: "rooms:pick", ref, pick })`.
+- **Players**: "Login with Rooms" — the host launches the room at `/?t=<token>`,
+  a JWT signed HS256 with `ROOMS_SIGNING_KEY`. We verify it **server-side** in
+  `lib/roomsAuth.ts` (`page.tsx` is a server component; `RoomClient.tsx` is the
+  client UI that receives only the safe claims). The token is stripped from the
+  URL on load and never reaches client JS or logs. A missing/invalid token falls
+  back to a clearly-labelled dev stub (`?name=`, untrusted). The UI hands picks to
+  the host via `postMessage({ type: "rooms:pick", ref, pick, playerId })` and
+  renders a required "Return to Rooms" link from the token's `returnUrl`.
 - **Admin (result entry)**: `/admin/resolve` requires `Authorization: Bearer $ADMIN_TOKEN`.
 
 ## Environment variables
 
 | Name | Required | Purpose |
 |------|----------|---------|
+| `ROOMS_SIGNING_KEY` | for live identity | HS256 secret from the Rooms `/developer` page; verifies the `?t=` launch token **server-side only**. Set in Vercel env, never commit, never ship to the client. Without it, every player falls back to the dev stub. |
 | `ADMIN_TOKEN` | for resolution | Bearer secret that gates `/admin/resolve`. Set in Vercel env, never commit. |
 
 ## State machine (per match ref)

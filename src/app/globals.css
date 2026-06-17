@@ -201,7 +201,31 @@ body {
   font-size: 18px;
   font-weight: 700;
   color: var(--accent);
-  margin: 0 0 18px;
+  margin: 0 0 6px;
+}
+
+.stub-note {
+  text-align: center;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 14px;
+}
+
+.return-link {
+  text-align: center;
+  font-size: 13px;
+  margin: 0 0 14px;
+}
+
+.return-link a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.return-link a:hover {
+  color: var(--txt);
 }
 
 .probe {

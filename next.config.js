@@ -9,6 +9,8 @@ const nextConfig = {
           { key: "Access-Control-Allow-Origin", value: "*" },
           { key: "Access-Control-Allow-Methods", value: "GET,POST,OPTIONS" },
           { key: "Access-Control-Allow-Headers", value: "Content-Type, Authorization" },
+          // Keep the launch token from leaking via Referer to any destination.
+          { key: "Referrer-Policy", value: "no-referrer" },
         ],
       },
     ];
