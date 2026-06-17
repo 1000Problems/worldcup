@@ -1,0 +1,36 @@
+import type { NextRequest } from "next/server";
+import { json, preflight } from "@/lib/http";
+
+export const dynamic = "force-dynamic";
+
+// GET /contract — the manifest. The Rooms host introspects this to learn who we
+// are and how to render and reward the game. Keep it returning valid JSON at all
+// times; it's the handshake everything else hangs off.
+export async function GET(req: NextRequest) {
+  const origin = new URL(req.url).origin;
+  return json({
+    id: "wc-match-predictor",
+    contractVersion: "1.0",
+    display: {
+      name: "World Cup Match Predictor",
+      blurb: "Call the result before kickoff.",
+      iconToken: "soccer",
+    },
+    // canonical: one real-world match is shared by many rooms (the F1 model).
+    // The specific match is selected by the event ref.
+    roomShape: { instancing: "canonical", minPlayers: 1, maxPlayers: 100000 },
+    pickSchema: { kind: "single-select", options: "from-event" },
+    capabilities: {
+      renderer: "bespoke",
+      rendererUrl: `${origin}/`,
+      liveState: false,
+      resolution: "world-fed",
+      rewards: ["trophy"],
+    },
+    badgeCatalog: [{ code: "called-it", label: "Called It" }],
+  });
+}
+
+export function OPTIONS() {
+  return preflight();
+}
