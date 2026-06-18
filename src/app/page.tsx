@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import RoomClient from "./RoomClient";
 import { verifyRoomsSession } from "@/lib/roomsAuth";
+import { isAsymConfigured, verifyLaunchAsym } from "@/lib/launchVerifyAsym";
 import { SESSION_COOKIE } from "@/lib/chatSession";
 
 // Read per request so the launch token in `?t=` is verified server-side.
@@ -8,16 +9,29 @@ export const dynamic = "force-dynamic";
 
 type SearchParams = { [key: string]: string | string[] | undefined };
 
+type SafePlayer = { playerId: string; displayName: string; avatarToken: string; returnUrl: string } | null;
+
 function one(v: string | string[] | undefined): string | null {
   return typeof v === "string" ? v : null;
 }
 
-export default function Page({ searchParams }: { searchParams: SearchParams }) {
-  // Identity comes from the launch token; once middleware has stashed it in the
-  // session cookie, that cookie keeps the player verified after the token is
-  // stripped from the URL.
-  const token = one(searchParams.t) ?? cookies().get(SESSION_COOKIE)?.value ?? null;
-  const player = verifyRoomsSession(token); // null if missing / bad / expired
+export default async function Page({ searchParams }: { searchParams: SearchParams }) {
+  // Two distinct credentials:
+  //   - `?t=` is the LAUNCH token from Rooms — ES256/JWKS when configured (target),
+  //     HS256 shared key otherwise (interim). Present only on the launch request.
+  //   - the cookie is OUR room session (always HS256, minted by middleware), which
+  //     keeps the player verified after the short launch ticket expires.
+  const t = one(searchParams.t);
+  const cookieTok = cookies().get(SESSION_COOKIE)?.value ?? null;
+
+  let player: SafePlayer = null;
+  if (t) {
+    player = isAsymConfigured() ? (await verifyLaunchAsym(t)).claims : verifyRoomsSession(t);
+  } else {
+    player = verifyRoomsSession(cookieTok); // room session
+  }
+
+  const token = t ?? cookieTok;
 
   return (
     <RoomClient
