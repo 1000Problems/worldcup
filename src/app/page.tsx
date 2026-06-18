@@ -1,5 +1,7 @@
+import { cookies } from "next/headers";
 import RoomClient from "./RoomClient";
 import { verifyRoomsSession } from "@/lib/roomsAuth";
+import { SESSION_COOKIE } from "@/lib/chatSession";
 
 // Read per request so the launch token in `?t=` is verified server-side.
 export const dynamic = "force-dynamic";
@@ -11,7 +13,10 @@ function one(v: string | string[] | undefined): string | null {
 }
 
 export default function Page({ searchParams }: { searchParams: SearchParams }) {
-  const token = one(searchParams.t);
+  // Identity comes from the launch token; once middleware has stashed it in the
+  // session cookie, that cookie keeps the player verified after the token is
+  // stripped from the URL.
+  const token = one(searchParams.t) ?? cookies().get(SESSION_COOKIE)?.value ?? null;
   const player = verifyRoomsSession(token); // null if missing / bad / expired
 
   return (

@@ -435,3 +435,223 @@ body {
   margin-top: 16px;
   line-height: 1.5;
 }
+
+/* --- /dev controls --- */
+.dev-h {
+  text-align: center;
+  font-size: 22px;
+  font-weight: 800;
+  margin: 4px 0 18px;
+  font-family: ui-monospace, monospace;
+}
+
+.dev-phase {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.dev-phase > span:first-child {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.pill {
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  background: rgba(255, 255, 255, 0.08);
+}
+.pill.ok {
+  background: rgba(46, 160, 67, 0.2);
+  color: #4ade80;
+}
+.pill.warn {
+  background: rgba(255, 210, 74, 0.18);
+  color: var(--accent);
+}
+.pill.done {
+  background: rgba(120, 120, 140, 0.25);
+  color: #c7cdd9;
+}
+
+.dev-label {
+  display: block;
+  margin: 20px 0 6px;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.dev-token {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--txt);
+  font-family: ui-monospace, monospace;
+  font-size: 14px;
+}
+
+.dev-token:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.dev-buttons {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.dev-btn {
+  width: 100%;
+  padding: 15px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--txt);
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  text-align: left;
+}
+.dev-btn:hover {
+  background: rgba(255, 255, 255, 0.09);
+}
+.dev-btn.warn {
+  border-color: rgba(255, 210, 74, 0.4);
+}
+.dev-btn.done {
+  border-color: rgba(74, 222, 128, 0.4);
+}
+.dev-btn.danger {
+  border-color: rgba(230, 70, 70, 0.45);
+}
+
+.dev-msg {
+  text-align: center;
+  font-size: 14px;
+  min-height: 20px;
+  margin-top: 14px;
+  color: var(--accent);
+}
+
+/* ===========================================================================
+   Goal Rush redesign — light theme. Appended so it overrides the dark base
+   above without deleting the /dev + probe class scaffolding. The room UI itself
+   is inline-styled in RoomClient.tsx / BanterBox.tsx; this file owns the page
+   background, fonts, animations, and the (re-themed) debug probe.
+   =========================================================================== */
+body {
+  background: #eef0f2;
+  color: #15161a;
+  font-family: "Archivo", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+input,
+button,
+textarea {
+  font-family: inherit;
+}
+::placeholder {
+  color: #9b9ea6;
+  font-weight: 500;
+}
+
+@keyframes gr-pop {
+  0% {
+    transform: translate(-50%, -50%) scale(0.4);
+    opacity: 0;
+  }
+  65% {
+    transform: translate(-50%, -50%) scale(1.08);
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+}
+@keyframes gr-fall {
+  0% {
+    transform: translateY(-30px) rotate(0);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(110vh) rotate(640deg);
+    opacity: 0.7;
+  }
+}
+@keyframes gr-ping {
+  0% {
+    box-shadow: 0 0 0 0 rgba(0, 158, 96, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 7px rgba(0, 158, 96, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(0, 158, 96, 0);
+  }
+}
+@keyframes gr-rise {
+  0% {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* Re-theme the debug probe for the light background. */
+.probe {
+  max-width: 1120px;
+  margin: 22px auto 0;
+  border: 1px solid rgba(21, 22, 26, 0.1);
+  border-radius: 14px;
+  background: #fff;
+  color: #15161a;
+}
+.probe-h {
+  color: #6b6e76;
+}
+.probe-sub {
+  color: #e20613;
+}
+.kv {
+  border-bottom: 1px dashed rgba(21, 22, 26, 0.1);
+}
+.kv > span {
+  color: #6b6e76;
+}
+.kv > code,
+.log {
+  color: #15161a;
+}
+.log {
+  background: #f4f5f7;
+  border: 1px solid rgba(21, 22, 26, 0.1);
+}
+.muted-line {
+  color: #9b9ea6;
+}
+.probe summary {
+  cursor: pointer;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #6b6e76;
+  font-weight: 700;
+}
