@@ -328,7 +328,18 @@ export default function RoomClient({ matchRef, player, returnUrl, devName, token
       return;
     }
 
-    const payload = { type: "rooms:pick", ref: matchRef, pick, playerId };
+    // Persist the pick to OUR private store. It never leaves worldcup — Rooms
+    // only ever learns the outcome at /close, never the prediction itself.
+    if (verified) {
+      fetch("/pick", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ref: matchRef, pick }),
+      }).catch(() => {});
+    }
+
+    // Signal the host that this player locked in — WITHOUT the pick contents.
+    const payload = { type: "rooms:locked", ref: matchRef, playerId };
     setLastSent(payload);
     if (typeof window !== "undefined" && window.parent !== window) window.parent.postMessage(payload, "*");
 

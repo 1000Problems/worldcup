@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { json, preflight } from "@/lib/http";
 import { getMatch, setResult, MAX_GOALS, MAX_MINUTE } from "@/lib/rooms";
+import { pushClose } from "@/lib/roomsClose";
 
 export const dynamic = "force-dynamic";
 
@@ -42,7 +43,14 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return json(setResult(m.ref, homeGoals, awayGoals, homeGoalMinutes, awayGoalMinutes));
+  const result = setResult(m.ref, homeGoals, awayGoals, homeGoalMinutes, awayGoalMinutes);
+
+  // Resolution is the one moment Rooms learns the outcome: push the scored board
+  // (placements + rewards only — never picks). Non-fatal; surface the push status
+  // so the operator can re-resolve to retry if Rooms was briefly unreachable.
+  const roomsClose = await pushClose(result);
+
+  return json({ ...result, roomsClose });
 }
 
 export function OPTIONS() {

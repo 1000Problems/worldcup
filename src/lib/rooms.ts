@@ -45,6 +45,10 @@ const MATCHES: Record<string, MatchDef> = {
   },
 };
 
+// v1: one deployment serves one room/one match. Routing roomId→ref is a later
+// step (ARCHITECTURE.md); until then the sole configured match answers.
+export const DEFAULT_REF = "match-38";
+
 export function getMatch(ref: string): MatchDef | null {
   return MATCHES[ref] ?? null;
 }
@@ -179,10 +183,41 @@ export function scorePicks(result: ResultDef, picks: PlayerPick[]): ScoreBreakdo
   });
 }
 
+// --- Pick store (ROOM-OWNED, private) ---------------------------------------
+// This room owns its picks. Rooms (the host) NEVER sees what a player predicted
+// — it only receives resolved results (placement + rewards) at /close. Picks are
+// captured server-side at lock-in (POST /pick, verified via the Rooms session
+// cookie so each pick is tied to a real Rooms identity) and scored locally by the
+// pure scorer. In-memory like the result store; swap for Neon/Vercel KV for
+// production durability.
+
+const picksByRef = new Map<string, Map<string, Pick>>();
+
+// Launch context, harvested from the verified session at pick time: who the room
+// is in Rooms (roomId) and where to POST results (the Rooms origin, from the
+// token's returnUrl). Lets us push /close with only ROOMS_SIGNING_KEY configured.
+export type LaunchCtx = { roomId: string; roomsHost: string };
+const ctxByRef = new Map<string, LaunchCtx>();
+
+export function recordPick(ref: string, playerId: string, pick: Pick, ctx?: LaunchCtx): void {
+  let m = picksByRef.get(ref);
+  if (!m) picksByRef.set(ref, (m = new Map()));
+  m.set(playerId, pick); // last write wins; picks are final at lock, enforced in /pick
+  if (ctx?.roomId && ctx.roomsHost) ctxByRef.set(ref, ctx);
+}
+
+export function listPicks(ref: string): PlayerPick[] {
+  const m = picksByRef.get(ref);
+  return m ? Array.from(m, ([playerId, pick]) => ({ playerId, pick })) : [];
+}
+
+export function launchCtx(ref: string): LaunchCtx | null {
+  return ctxByRef.get(ref) ?? null;
+}
+
 // --- Result store ----------------------------------------------------------
-// Manual resolution (admin POST). In-memory is fine: Rooms owns the durable
-// pick store and re-runs the pure scorer. A cold start just clears the posted
-// result, which the admin re-posts. Swap for Neon/Vercel KV in production.
+// Manual resolution (admin POST). In-memory is fine; a cold start just clears the
+// posted result, which the admin re-posts. Swap for Neon/Vercel KV in production.
 
 const results = new Map<string, ResultDef>();
 
@@ -227,11 +262,13 @@ export function isLocked(ref: string) {
   return manualLocks.has(ref);
 }
 
-// Wipe OUR state for a ref: the posted result and the manual lock. Rooms owns
-// the pick store, so players' picks are cleared on the Rooms side, not here.
+// Wipe OUR state for a ref: the posted result, the manual lock, and our picks.
+// We own the picks, so they're cleared here — Rooms holds none to clear.
 export function reset(ref: string) {
   results.delete(ref);
   manualLocks.delete(ref);
+  picksByRef.delete(ref);
+  ctxByRef.delete(ref);
 }
 
 // --- Phase (clock-aware; /phase may read the clock, /score may not) ---------
