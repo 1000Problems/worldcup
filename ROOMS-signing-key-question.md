@@ -1,69 +1,77 @@
-# Question for Rooms: which key signs player launch tokens in production?
+# Request to Rooms: launch-token verification that doesn't depend on who's logged in
 
-We're integrating a third-party room (World Cup Match Predictor) and verifying the
-signed launch token exactly as your guide describes. Before we open the game to the
-public we need to confirm one thing about the signing key, because what we see on the
-`/developer` page doesn't match the "one key per room" assumption the integration
-doc sets up.
+We're integrating a third-party room (World Cup Match Predictor) and we're going to
+open it to the public. We need the room to authenticate **every** player the same way,
+independent of which Rooms account is logged in. The current launch-token model couples
+verification to the logged-in account, and that won't survive a public launch. This
+note states the requirement and the two standard designs that would satisfy it; we'd
+like Rooms to support one of them.
 
-## What we built (per your spec)
+## The requirement
 
-Rooms opens our room at `https://…/?t=<token>`. We verify `t` server-side — HS256,
-constant-time signature compare, `exp` check — using a single secret we copied from
-the `/developer` page into our host's environment as `ROOMS_SIGNING_KEY`. A token that
-verifies greets the player by their `displayName` and attributes their pick to their
-`playerId`; a token that fails verification falls back to a signed-out state. This all
-works: a launch from the account that owns the key signs in correctly.
+Two things have to be cleanly separated:
 
-Your integration guide says the key is shown on `/developer` "for your room" — i.e.
-one key per room.
+- **Player identity** (playerId, displayName) comes from the launch token's claims and
+  naturally varies per player. That's expected and we want it.
+- **The trust anchor we verify against** must be a single, stable, room-level credential
+  that Rooms controls. It must **not** vary with the player or the developer who happens
+  to be logged in, and verifying it must not require us to hold a per-user secret.
 
-## What we actually observed
+In short: any player's launch token must verify against the same room-level trust
+anchor, every time, no matter who they are.
 
-Testing with two browsers logged into **two different Rooms accounts**:
+## Why today's model fails the requirement
 
-- Account A (Chrome): `/developer` shows key K-A. We put K-A in our environment.
-  Launching the room as A → token verifies, player signs in. Correct.
-- Account B (Brave): `/developer` shows a **different** key, K-B. Launching the room
-  as B → the token is present but its signature is signed with K-B, so it fails
-  verification against K-A. Player is rejected.
+Rooms opens our room at `https://…/?t=<token>`, an HS256 JWT. HS256 is a **symmetric
+shared secret** — the same key signs and verifies. Your `/developer` page hands that
+secret out, and in testing it is scoped to the **logged-in developer account**: two
+different accounts see two different keys, so a token minted under account B fails
+verification against account A's key, which is the only one we can store. The secret is
+therefore tied to who's logged in. We can't ship a public game on a trust anchor that
+changes with the account.
 
-So in practice the key we're handed looks **scoped to the developer account**, not
-stable per room. We can only store one `ROOMS_SIGNING_KEY` in our environment, so only
-launches signed with that one key can ever verify.
+## Two designs that meet the requirement
 
-## Why this blocks a public launch
+**Option 1 — Asymmetric tokens + published JWKS (our preference).**
+Rooms signs launch tokens with a private key it never shares (RS256 or ES256) and
+publishes the matching **public** key at a stable JWKS endpoint, with a `kid` in each
+token header. We verify any player's token against that public key. We hold no secret;
+nothing depends on the logged-in account; key rotation is handled by `kid`/JWKS lookup
+with an overlap window. This is the standard OIDC ID-token pattern and is the cleanest
+fit for a public, multi-player room.
 
-When the game goes public, hundreds of ordinary players will open the room from the
-Rooms app. None of them are developers; none of them see `/developer`. For the room to
-open for **every** player, every player's launch token must be signed with the **one**
-room key we hold — regardless of who the player is. If signing is tied to anything
-per-user, most players would be rejected, which is unacceptable for a public game.
+What we'd need from Rooms: a stable issuer (`iss`), a stable JWKS URL, the signing
+algorithm, and the `kid` convention.
 
-We assume the per-account difference we saw is an artifact of testing with two
-*developer* accounts, and that real player launches are all signed with the single room
-key. We need you to confirm that, not assume it.
+**Option 2 — Token introspection / session-validation endpoint.**
+The `?t=` value is opaque. Our room calls a Rooms API to exchange it for verified player
+claims, authenticating that call with **our room's own client credentials** — issued
+once to the room, not to any player. Trust depends on the room credential, not on the
+player's session.
 
-## What we need confirmed
+What we'd need from Rooms: an introspection/validation endpoint, the room client
+credentials, and the claim shape returned.
 
-1. **Is there exactly one signing key per room**, and is **every** player's launch
-   token — for any player, developer or not — signed with that single room key?
-2. **The key on `/developer`:** is it the canonical, room-level key, or is it scoped to
-   the viewing developer's account? If it's account-scoped, where do we read the
-   canonical room key to put in our environment?
-3. **Production player flow:** when a non-developer player opens the public room, which
-   key signs their `t` token? Confirm it is the same key we store as
-   `ROOMS_SIGNING_KEY`.
-4. **Rotation and stability:** can the room key change over time — e.g. does viewing or
-   refreshing `/developer` rotate it? If it can rotate, how are we notified so we can
-   update the environment before tokens start failing? Is there a rotation/overlap
-   window, or does a rotation immediately invalidate every in-flight launch?
-5. **Multiple developers, one room:** if more than one developer account is attached to
-   the same room, do they all see the same key? If not, which one is authoritative?
+Either option roots trust in a stable room-level credential and makes verification
+independent of who's logged in. We prefer Option 1 because it's stateless, needs no
+network call on the hot path, and is a well-trodden standard.
+
+## What we're asking Rooms
+
+1. Can Rooms sign launch tokens **asymmetrically** and publish a **public JWKS** for the
+   room (Option 1)? If so, please share the issuer, JWKS URL, algorithm, and `kid`
+   convention.
+2. If not, can Rooms expose a **token-introspection / session-validation endpoint**
+   authenticated by per-room client credentials (Option 2)? If so, please share the
+   endpoint, the credential issuance flow, and the returned claim shape.
+3. Either way: what is the **key/credential rotation** procedure, and is there an
+   overlap window so in-flight launches don't fail during a rotation?
+4. Confirm that whichever mechanism you provide is **room-level and player-agnostic** —
+   the same trust anchor verifies every player's launch, regardless of which account is
+   logged in.
 
 ## What would unblock us
 
-A single, stable, room-level signing key that signs all player launch tokens, with a
-documented rotation procedure if rotation is possible. If the model is genuinely
-per-account, we need a supported way to fetch and pin the canonical room key — because a
-public room can't verify against a key that changes with the player.
+A room-level, public (or introspection-based) verification path — one trust anchor per
+room, no per-user secret, with documented rotation. Once we have that, our room verifies
+every player the same way and we can open the game to the public.
