@@ -194,8 +194,10 @@ export function scorePicks(result: ResultDef, picks: PlayerPick[]): ScoreBreakdo
 const picksByRef = new Map<string, Map<string, Pick>>();
 
 // Launch context, harvested from the verified session at pick time: who the room
-// is in Rooms (roomId) and where to POST results (the Rooms origin, from the
-// token's returnUrl). Lets us push /close with only ROOMS_SIGNING_KEY configured.
+// is in Rooms (roomId) and where to POST results. The Rooms host is INFERRED from
+// the token's returnUrl origin — true today, but an inferred value, not one Rooms
+// hands us explicitly; revisit if Rooms ever adds a dedicated host claim. Lets us
+// push /close with only ROOMS_SIGNING_KEY configured.
 export type LaunchCtx = { roomId: string; roomsHost: string };
 const ctxByRef = new Map<string, LaunchCtx>();
 

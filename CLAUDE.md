@@ -71,14 +71,30 @@ identical-perfect predictions tie (shared win). Constants live in `lib/rooms.ts`
 
 ## Auth model
 
+> **Launch signing is HS256 today — this is the INTERIM v1 path.** The agreed
+> target (`ROOMS-reply-confirm-jwks.md`) is a stateless **ES256-over-JWKS** cutover:
+> pin the alg, check `iss`, check `aud`, key by `kid` with one refetch on an unknown
+> kid. None of that is built yet — it's gated on Rooms publishing the production
+> `iss` / JWKS URL. The symmetric per-room key below is correct for the match-38
+> pilot; treat it as interim so the cutover doesn't get lost.
+
 - **Players**: "Login with Rooms" — the host launches the room at `/?t=<token>`,
   a JWT signed HS256 with `ROOMS_SIGNING_KEY`. We verify it **server-side** in
   `lib/roomsAuth.ts` (`page.tsx` is a server component; `RoomClient.tsx` is the
   client UI that receives only the safe claims). The token is stripped from the
   URL on load and never reaches client JS or logs. A missing/invalid token falls
-  back to a clearly-labelled dev stub (`?name=`, untrusted). The UI hands picks to
-  the host via `postMessage({ type: "rooms:pick", ref, pick, playerId })` and
-  renders a required "Return to Rooms" link from the token's `returnUrl`.
+  back to a clearly-labelled dev stub (`?name=`, untrusted).
+- **Session lifetime**: the launch token is a short, single-use ticket (exp ~5 min).
+  Middleware (`middleware.ts` → `lib/roomSession.ts`, Web Crypto on Edge) **exchanges
+  it for a 6h room-issued session** at launch — same identity, re-signed with our
+  key — so a player composing a prediction past the ticket's TTL stays signed in.
+  Downstream Node routes verify that session with `roomsAuth`, unchanged.
+- **Picks are private to this room — Rooms never sees a prediction.** On lock-in the
+  pick is POSTed to our own `/pick` store (identity taken from the verified session
+  cookie); the host gets only a contentless `postMessage({ type: "rooms:locked",
+  ref, playerId })` and, at resolution, the scored board via `/close` (placement +
+  rewards, never picks). The UI renders a required "Return to Rooms" link from the
+  token's `returnUrl`.
 - **Admin (result entry)**: `/admin/resolve` requires `Authorization: Bearer $ADMIN_TOKEN`.
 
 ## Environment variables

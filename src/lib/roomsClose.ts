@@ -17,7 +17,8 @@ type CloseResult = {
 const TROPHY_LABEL = "Oracle of Atlanta";
 const CORRECT_OUTCOME_FLOOR = 1_000_000; // points at/above this ⇒ right winner/draw
 
-// Dense ranking by points (ties share a placement), mapped to rewards. Pure.
+// Standard competition ranking by points — ties share a rank and the next rank
+// skips it (e.g. 1, 1, 3, not 1, 1, 2) — mapped to rewards. Pure.
 function toResults(result: ResultDef): CloseResult[] {
   const board = scorePicks(result, listPicks(result.ref)).sort((a, b) => b.points - a.points);
 
