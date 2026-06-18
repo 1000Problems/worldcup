@@ -210,11 +210,36 @@ export function setResult(
   return result;
 }
 
+// --- Manual lifecycle override (dev/test) ----------------------------------
+// Lets the /dev controls drive open → locked → closed → open on demand without
+// waiting for the real kickoff. In-memory, same durability note as the result
+// store; a cold start clears overrides, which is fine for a test tool.
+
+const manualLocks = new Set<string>();
+
+export function setLock(ref: string) {
+  manualLocks.add(ref);
+}
+export function clearLock(ref: string) {
+  manualLocks.delete(ref);
+}
+export function isLocked(ref: string) {
+  return manualLocks.has(ref);
+}
+
+// Wipe OUR state for a ref: the posted result and the manual lock. Rooms owns
+// the pick store, so players' picks are cleared on the Rooms side, not here.
+export function reset(ref: string) {
+  results.delete(ref);
+  manualLocks.delete(ref);
+}
+
 // --- Phase (clock-aware; /phase may read the clock, /score may not) ---------
 
 export type Phase = "open" | "locked" | "closed";
 
 export function phaseFor(m: MatchDef, now: Date = new Date()): Phase {
   if (getResult(m.ref)) return "closed";
-  return now.getTime() >= new Date(m.kickoffISO).getTime() ? "locked" : "open";
+  if (manualLocks.has(m.ref) || now.getTime() >= new Date(m.kickoffISO).getTime()) return "locked";
+  return "open";
 }

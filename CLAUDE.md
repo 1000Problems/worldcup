@@ -55,6 +55,12 @@ No new code, no new deploy beyond shipping the data.
 | POST | `/score` | `{ result, picks[] }` | ScoreBreakdown[] (PURE) |
 | POST | `/rewards` | `{ result, standings }` | RewardProposal |
 | POST | `/admin/resolve` | `{ ref, homeGoals, awayGoals, homeGoalMinutes[], awayGoalMinutes[] }` + Bearer token | ResultDef |
+| POST | `/admin/lock` | `{ ref }` + Bearer token | `{ ref, phase }` (dev: force `locked`) |
+| POST | `/admin/reset` | `{ ref }` + Bearer token | `{ ref, phase }` (dev: wipe result + lock → `open`) |
+
+The `/dev` page is a token-gated operator console for these: Lock → Resolve (canned
+Spain 1–0 @10′) → Reset, with a live `/phase` readout. Drives the lifecycle without
+waiting for the real kickoff. Reset clears only our state; Rooms owns the picks.
 
 Pick shape: `{ homeGoals, awayGoals, homeGoalMinutes[], awayGoalMinutes[] }` (minute
 arrays length = their goal count, each 1..120). `/score` is pure and ranks by a
@@ -85,12 +91,14 @@ identical-perfect predictions tie (shared win). Constants live in `lib/rooms.ts`
 ## State machine (per match ref)
 
 ```
-open  ──(now ≥ kickoff)──▶  locked  ──(admin posts result)──▶  closed
+open  ──(manual lock OR now ≥ kickoff)──▶  locked  ──(admin posts result)──▶  closed
+  ▲                                                                              │
+  └──────────────────────────(admin reset wipes result + lock)──────────────────┘
 ```
 
-`/phase` is the authority. `open` before kickoff, `locked` from kickoff until a
-result is posted, `closed` once resolved. `/phase` may read the clock; `/score`
-may not.
+`/phase` is the authority. `open` before kickoff, `locked` from kickoff (or a
+manual `/admin/lock`) until a result is posted, `closed` once resolved, and back
+to `open` on `/admin/reset`. `/phase` may read the clock; `/score` may not.
 
 ## Critical notes
 
