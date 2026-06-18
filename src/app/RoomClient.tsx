@@ -339,14 +339,13 @@ export default function RoomClient({ matchRef, player, returnUrl, devName, token
     if (confT.current) clearTimeout(confT.current);
     confT.current = setTimeout(() => setConfetti([]), 2700);
 
-    // Announce the lock to the room (only verified players can post).
+    // Announce the lock to the room WITHOUT revealing the pick — guesses stay
+    // sealed until full time so nobody can copy or counter another player.
     if (verified) {
-      const all = [...espMins, ...ksaMins].sort((x, y) => x - y);
-      const minStr = all.length ? " · " + all.map((m) => m + "'").join(" ") : "";
       fetch(`/chat/${matchRef}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ body: `⭐ Locked in ${home.name} ${homeGoals}–${awayGoals} ${away.name}${minStr} 🔒` }),
+        body: JSON.stringify({ body: "🔒 Locked in my pick — sealed till full time." }),
       }).catch(() => {});
     }
   }
