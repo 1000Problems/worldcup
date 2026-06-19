@@ -32,6 +32,9 @@ export async function GET(req: NextRequest) {
       resolution: "world-fed",
       rewards: ["trophy"],
     },
+    // This game also exposes a series the host can enumerate (GET /series). The
+    // host sums per-event boards (pushed at /close) into the aggregate standing.
+    series: { ref: "world-cup-2026", aggregation: "sum" },
     badgeCatalog: [{ code: "called-it", label: "Called It" }],
   });
 }

@@ -45,6 +45,16 @@ const MATCHES: Record<string, MatchDef> = {
     // 12:00 ET on 21 Jun 2026. June is EDT (UTC-4) → 16:00 UTC.
     kickoffISO: "2026-06-21T16:00:00.000Z",
   },
+  "match-54": {
+    ref: "match-54",
+    competition: "FIFA World Cup 2026",
+    stage: "Group H · Matchday 3",
+    home: { code: "ESP", name: "Spain" },
+    away: { code: "URU", name: "Uruguay" },
+    venue: "AT&T Stadium, Arlington",
+    // 3pm ET on 24 Jun 2026, three days after match-38. June is EDT (UTC-4) → 19:00 UTC.
+    kickoffISO: "2026-06-24T19:00:00.000Z",
+  },
 };
 
 // v1: one deployment serves one room/one match. Routing roomId→ref is a later
@@ -267,4 +277,79 @@ export async function phaseFor(m: MatchDef, now: Date = new Date()): Promise<Pha
   if (await getResult(m.ref)) return "closed";
   if (manualLocks.has(m.ref) || now.getTime() >= new Date(m.kickoffISO).getTime()) return "locked";
   return "open";
+}
+
+// --- Series registry -------------------------------------------------------
+// A series groups events into one tournament the host enumerates and keeps a
+// running standing across (one-room-one-event still holds at the bottom — the
+// series is an aggregation over events, never a long-lived room). The scorer is
+// untouched: the series only adds the cross-event sum the host computes.
+
+export interface SeriesDef {
+  ref: string;
+  competition: string;
+  display: { name: string; blurb: string; iconToken: string };
+  eventRefs: string[]; // ordered; the host enumerates events from here
+  aggregation: "sum"; // how per-event scores roll into the standing
+  trophyLabel: string; // series trophy minted to the top of the standing
+}
+
+const SERIES: Record<string, SeriesDef> = {
+  "world-cup-2026": {
+    ref: "world-cup-2026",
+    competition: "FIFA World Cup 2026",
+    display: {
+      name: "World Cup 2026 — Spain's run",
+      blurb: "Call every Spain match. Best across the group wins.",
+      iconToken: "trophy",
+    },
+    eventRefs: ["match-38", "match-54"],
+    aggregation: "sum",
+    trophyLabel: "Group Oracle",
+  },
+};
+
+export function getSeries(sref: string): SeriesDef | null {
+  return SERIES[sref] ?? null;
+}
+
+export function listSeries(): SeriesDef[] {
+  return Object.values(SERIES);
+}
+
+// Find the series an event belongs to (null if it's a standalone match — a match
+// in no series still scores and resolves exactly the same; nothing branches).
+export function seriesForEvent(ref: string): SeriesDef | null {
+  for (const s of Object.values(SERIES)) {
+    if (s.eventRefs.includes(ref)) return s;
+  }
+  return null;
+}
+
+// --- Series phase (derived, game-asserted) ---------------------------------
+// Rolled up from the member events, but exposed as the game's own signal so the
+// game stays the authority (only it knows the bracket is exhausted). May read the
+// clock, exactly like phaseFor; it must NOT score.
+
+export type SeriesPhase = "upcoming" | "open" | "live" | "completed";
+
+export async function seriesPhase(sref: string, now: Date = new Date()): Promise<SeriesPhase | null> {
+  const s = getSeries(sref);
+  if (!s) return null;
+
+  const phases: Phase[] = [];
+  for (const ref of s.eventRefs) {
+    const m = getMatch(ref);
+    if (m) phases.push(await phaseFor(m, now));
+  }
+  if (phases.length === 0) return "upcoming";
+
+  // completed — every member event is closed (pilot: "both closed"; the asserted
+  // form matters once knockout rounds grow eventRefs over time).
+  if (phases.every((p) => p === "closed")) return "completed";
+  // open — at least one event is still pickable.
+  if (phases.some((p) => p === "open")) return "open";
+  // live — at least one event is locked and none still open.
+  if (phases.some((p) => p === "locked")) return "live";
+  return "upcoming";
 }

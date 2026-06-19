@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { listPicks, launchCtx, scorePicks, type ResultDef } from "@/lib/rooms";
+import { listPicks, launchCtx, scorePicks, seriesForEvent, type ResultDef } from "@/lib/rooms";
 
 // ---------------------------------------------------------------------------
 // Push resolved results to Rooms — the ONLY thing Rooms learns about a match
@@ -10,6 +10,7 @@ import { listPicks, launchCtx, scorePicks, type ResultDef } from "@/lib/rooms";
 
 type CloseResult = {
   playerId: string;
+  points: number; // raw cascade points — the host sums these for the series aggregate
   placement: number;
   rewards: { trophy?: { label: string }; xp?: number; badges?: string[] };
 };
@@ -42,7 +43,7 @@ async function toResults(result: ResultDef): Promise<CloseResult[]> {
     if (placement === 1 && row.points > 0) rewards.trophy = { label: TROPHY_LABEL };
     if (badges.length) rewards.badges = badges;
 
-    out.push({ playerId: row.playerId, placement, rewards });
+    out.push({ playerId: row.playerId, points: row.points, placement, rewards });
   }
   return out;
 }
@@ -58,8 +59,14 @@ export async function pushClose(result: ResultDef): Promise<PushOutcome> {
   const results = await toResults(result);
   if (results.length === 0) return { ok: false, skipped: "no picks to report" };
 
+  // Attribute the board to its series so the host can recompute the aggregate.
+  // null for a standalone match (in no series) — it still closes the same way.
+  const sref = seriesForEvent(result.ref)?.ref ?? null;
+
   // Sign the EXACT bytes we send — Rooms recomputes the HMAC over the raw body.
-  const body = JSON.stringify({ roomId: ctx.roomId, results });
+  // Points + placement + rewards keyed by playerId, plus the event ref so the host
+  // can attribute the board to the series and sum the aggregate. NEVER picks.
+  const body = JSON.stringify({ sref, ref: result.ref, roomId: ctx.roomId, results });
   const sig = createHmac("sha256", key).update(body).digest("hex");
 
   try {
