@@ -10,7 +10,7 @@ export async function GET(_req: NextRequest, { params }: { params: { ref: string
   const m = getMatch(params.ref);
   if (!m) return json({ error: "unknown event ref" }, 404);
 
-  return json({ phase: phaseFor(m), status: "scheduled" });
+  return json({ phase: await phaseFor(m), status: "scheduled" });
 }
 
 export function OPTIONS() {

@@ -52,7 +52,7 @@ export async function GET(req: NextRequest) {
   const m = getMatch(DEFAULT_REF);
   if (!m) return json({ error: "no match configured" }, 500);
 
-  return json({ phase: phaseFor(m) });
+  return json({ phase: await phaseFor(m) });
 }
 
 export function OPTIONS() {

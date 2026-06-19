@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
   const m = ref ? getMatch(ref) : null;
   if (!m) return json({ error: "unknown event ref" }, 404);
 
-  if (phaseFor(m) !== "open") return json({ error: "picks are closed" }, 409);
+  if ((await phaseFor(m)) !== "open") return json({ error: "picks are closed" }, 409);
 
   const check = validatePick(m, body?.pick);
   if (!check.valid) return json({ error: check.reason ?? "invalid pick" }, 400);
@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
     /* returnUrl absent/malformed — ctx simply won't be recorded */
   }
 
-  recordPick(m.ref, player.playerId, body.pick as Pick, { roomId: player.roomId, roomsHost });
+  await recordPick(m.ref, player.playerId, body.pick as Pick, { roomId: player.roomId, roomsHost });
   return json({ ok: true });
 }
 

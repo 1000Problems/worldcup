@@ -4,9 +4,8 @@ import { getMatch, reset, phaseFor } from "@/lib/rooms";
 
 export const dynamic = "force-dynamic";
 
-// POST /admin/reset { ref } — dev control: wipe OUR state (posted result + manual
-// lock) so the room returns to `open`. Rooms owns the picks — those reset on the
-// Rooms side, not here. Gated by ADMIN_TOKEN (Bearer).
+// POST /admin/reset { ref } — dev control: wipe OUR state (posted result, manual
+// lock, and our picks) so the room returns to `open`. Gated by ADMIN_TOKEN (Bearer).
 export async function POST(req: NextRequest) {
   const expected = process.env.ADMIN_TOKEN;
   if (!expected) return json({ error: "ADMIN_TOKEN not configured" }, 500);
@@ -19,8 +18,8 @@ export async function POST(req: NextRequest) {
   const m = ref ? getMatch(ref) : null;
   if (!m) return json({ error: "unknown event ref" }, 404);
 
-  reset(m.ref);
-  return json({ ref: m.ref, phase: phaseFor(m) });
+  await reset(m.ref);
+  return json({ ref: m.ref, phase: await phaseFor(m) });
 }
 
 export function OPTIONS() {

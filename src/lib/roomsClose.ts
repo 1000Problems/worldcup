@@ -19,8 +19,8 @@ const CORRECT_OUTCOME_FLOOR = 1_000_000; // points at/above this ⇒ right winne
 
 // Standard competition ranking by points — ties share a rank and the next rank
 // skips it (e.g. 1, 1, 3, not 1, 1, 2) — mapped to rewards. Pure.
-function toResults(result: ResultDef): CloseResult[] {
-  const board = scorePicks(result, listPicks(result.ref)).sort((a, b) => b.points - a.points);
+async function toResults(result: ResultDef): Promise<CloseResult[]> {
+  const board = scorePicks(result, await listPicks(result.ref)).sort((a, b) => b.points - a.points);
 
   const out: CloseResult[] = [];
   let placement = 0;
@@ -51,11 +51,11 @@ export type PushOutcome = { ok: boolean; status?: number; skipped?: string };
 
 export async function pushClose(result: ResultDef): Promise<PushOutcome> {
   const key = process.env.ROOMS_SIGNING_KEY;
-  const ctx = launchCtx(result.ref);
+  const ctx = await launchCtx(result.ref);
   if (!key) return { ok: false, skipped: "ROOMS_SIGNING_KEY not set" };
   if (!ctx) return { ok: false, skipped: "no launch context (no verified picks captured)" };
 
-  const results = toResults(result);
+  const results = await toResults(result);
   if (results.length === 0) return { ok: false, skipped: "no picks to report" };
 
   // Sign the EXACT bytes we send — Rooms recomputes the HMAC over the raw body.

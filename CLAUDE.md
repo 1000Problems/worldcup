@@ -103,6 +103,7 @@ identical-perfect predictions tie (shared win). Constants live in `lib/rooms.ts`
 |------|----------|---------|
 | `ROOMS_SIGNING_KEY` | always | HS256 secret from the Rooms `/developer` page. Interim: verifies the `?t=` launch token. Always: signs `/close`, verifies `/state`, and mints/verifies our 6h room session. Server-side only; never commit, never ship to the client. Without it, every player falls back to the dev stub. |
 | `ADMIN_TOKEN` | for resolution | Bearer secret that gates `/admin/resolve`. Set in Vercel env, never commit. |
+| `DATABASE_URL` | for durable picks | Neon connection string. Picks/results persist in `worldcup_*` tables (namespaced in the shared 1000Problems Neon; created idempotently, never collide with the host's `rooms_*`). Without it, `lib/store.ts` falls back to in-memory (local dev only — a cold start loses picks). |
 | `ROOMS_ISSUER` | for ES256 cutover | Expected `iss` on the launch token (Rooms' canonical origin). Setting the three `ROOMS_*` ES256 vars switches launch verification from HS256 to ES256/JWKS. |
 | `ROOMS_JWKS_URL` | for ES256 cutover | Rooms' `/.well-known/jwks.json`; source of the EC public keys we verify launch tokens against (no secret held on our side). |
 | `ROOMS_ROOM_ID` | for ES256 cutover | Our room id from `/developer`; the launch token's `aud` must equal it (closes cross-room replay under the shared JWKS). |

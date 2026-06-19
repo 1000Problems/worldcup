@@ -12,6 +12,8 @@
 // Rooms re-runs /score to audit the board, so scorePicks() must stay pure.
 // ---------------------------------------------------------------------------
 
+import * as store from "@/lib/store";
+
 export type Outcome = "HOME" | "DRAW" | "AWAY";
 
 export interface Team {
@@ -191,49 +193,36 @@ export function scorePicks(result: ResultDef, picks: PlayerPick[]): ScoreBreakdo
 // pure scorer. In-memory like the result store; swap for Neon/Vercel KV for
 // production durability.
 
-const picksByRef = new Map<string, Map<string, Pick>>();
-
 // Launch context, harvested from the verified session at pick time: who the room
 // is in Rooms (roomId) and where to POST results. The Rooms host is INFERRED from
-// the token's returnUrl origin — true today, but an inferred value, not one Rooms
-// hands us explicitly; revisit if Rooms ever adds a dedicated host claim. Lets us
-// push /close with only ROOMS_SIGNING_KEY configured.
+// the token's returnUrl origin — true today, not a value Rooms hands us explicitly.
 export type LaunchCtx = { roomId: string; roomsHost: string };
-const ctxByRef = new Map<string, LaunchCtx>();
 
-export function recordPick(ref: string, playerId: string, pick: Pick, ctx?: LaunchCtx): void {
-  let m = picksByRef.get(ref);
-  if (!m) picksByRef.set(ref, (m = new Map()));
-  m.set(playerId, pick); // last write wins; picks are final at lock, enforced in /pick
-  if (ctx?.roomId && ctx.roomsHost) ctxByRef.set(ref, ctx);
+export function recordPick(ref: string, playerId: string, pick: Pick, ctx?: LaunchCtx): Promise<void> {
+  return store.savePick(ref, playerId, pick, ctx); // last write wins; finality enforced in /pick
 }
 
-export function listPicks(ref: string): PlayerPick[] {
-  const m = picksByRef.get(ref);
-  return m ? Array.from(m, ([playerId, pick]) => ({ playerId, pick })) : [];
+export function listPicks(ref: string): Promise<PlayerPick[]> {
+  return store.loadPicks(ref);
 }
 
-export function launchCtx(ref: string): LaunchCtx | null {
-  return ctxByRef.get(ref) ?? null;
+export function launchCtx(ref: string): Promise<LaunchCtx | null> {
+  return store.loadCtx(ref);
 }
 
 // --- Result store ----------------------------------------------------------
-// Manual resolution (admin POST). In-memory is fine; a cold start just clears the
-// posted result, which the admin re-posts. Swap for Neon/Vercel KV in production.
 
-const results = new Map<string, ResultDef>();
-
-export function getResult(ref: string): ResultDef | null {
-  return results.get(ref) ?? null;
+export function getResult(ref: string): Promise<ResultDef | null> {
+  return store.loadResult(ref);
 }
 
-export function setResult(
+export async function setResult(
   ref: string,
   homeGoals: number,
   awayGoals: number,
   homeGoalMinutes: number[],
   awayGoalMinutes: number[],
-): ResultDef {
+): Promise<ResultDef> {
   const result: ResultDef = {
     ref,
     homeGoals,
@@ -243,14 +232,14 @@ export function setResult(
     awayGoalMinutes,
     final: true,
   };
-  results.set(ref, result);
+  await store.saveResult(result);
   return result;
 }
 
 // --- Manual lifecycle override (dev/test) ----------------------------------
 // Lets the /dev controls drive open → locked → closed → open on demand without
-// waiting for the real kickoff. In-memory, same durability note as the result
-// store; a cold start clears overrides, which is fine for a test tool.
+// waiting for the real kickoff. In-memory: a cold start clears overrides, which is
+// fine for a test tool — the real lock is the clock vs kickoff, which is durable.
 
 const manualLocks = new Set<string>();
 
@@ -264,21 +253,18 @@ export function isLocked(ref: string) {
   return manualLocks.has(ref);
 }
 
-// Wipe OUR state for a ref: the posted result, the manual lock, and our picks.
-// We own the picks, so they're cleared here — Rooms holds none to clear.
-export function reset(ref: string) {
-  results.delete(ref);
+// Wipe OUR durable state for a ref (picks + result) plus the in-memory lock.
+export async function reset(ref: string) {
   manualLocks.delete(ref);
-  picksByRef.delete(ref);
-  ctxByRef.delete(ref);
+  await store.clear(ref);
 }
 
 // --- Phase (clock-aware; /phase may read the clock, /score may not) ---------
 
 export type Phase = "open" | "locked" | "closed";
 
-export function phaseFor(m: MatchDef, now: Date = new Date()): Phase {
-  if (getResult(m.ref)) return "closed";
+export async function phaseFor(m: MatchDef, now: Date = new Date()): Promise<Phase> {
+  if (await getResult(m.ref)) return "closed";
   if (manualLocks.has(m.ref) || now.getTime() >= new Date(m.kickoffISO).getTime()) return "locked";
   return "open";
 }

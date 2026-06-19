@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const result = setResult(m.ref, homeGoals, awayGoals, homeGoalMinutes, awayGoalMinutes);
+  const result = await setResult(m.ref, homeGoals, awayGoals, homeGoalMinutes, awayGoalMinutes);
 
   // Resolution is the one moment Rooms learns the outcome: push the scored board
   // (placements + rewards only — never picks). Non-fatal; surface the push status

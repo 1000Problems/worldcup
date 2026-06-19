@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
   if (!m) return json({ error: "unknown event ref" }, 404);
 
   setLock(m.ref);
-  return json({ ref: m.ref, phase: phaseFor(m) });
+  return json({ ref: m.ref, phase: await phaseFor(m) });
 }
 
 export function OPTIONS() {

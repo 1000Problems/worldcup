@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
   const m = ref ? getMatch(ref) : null;
   if (!m) return json({ error: "unknown event ref" }, 404);
 
-  return json(getResult(m.ref)); // ResultDef | null
+  return json(await getResult(m.ref)); // ResultDef | null
 }
 
 export function OPTIONS() {
