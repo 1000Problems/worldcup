@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { json, preflight } from "@/lib/http";
-import { getMatch, setResult, MAX_GOALS, MAX_MINUTE } from "@/lib/rooms";
-import { pushClose } from "@/lib/roomsClose";
+import { getMatch, setResult, seriesForEvent, MAX_GOALS, MAX_MINUTE } from "@/lib/rooms";
+import { pushClose, pushSeriesClose } from "@/lib/roomsClose";
 
 export const dynamic = "force-dynamic";
 
@@ -50,7 +50,13 @@ export async function POST(req: NextRequest) {
   // so the operator can re-resolve to retry if Rooms was briefly unreachable.
   const roomsClose = await pushClose(result);
 
-  return json({ ...result, roomsClose });
+  // If this event belongs to a series and that resolution completes it, push the
+  // series close too. pushSeriesClose no-ops unless the whole series is decided,
+  // so calling it on every series-event resolution is safe.
+  const series = seriesForEvent(result.ref);
+  const seriesClose = series ? await pushSeriesClose(series.ref) : undefined;
+
+  return json({ ...result, roomsClose, seriesClose });
 }
 
 export function OPTIONS() {

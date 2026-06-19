@@ -1,11 +1,27 @@
 import { createHmac } from "node:crypto";
-import { listPicks, launchCtx, scorePicks, seriesForEvent, type ResultDef } from "@/lib/rooms";
+import {
+  listPicks,
+  launchCtx,
+  scorePicks,
+  seriesForEvent,
+  getSeries,
+  getResult,
+  seriesPhase,
+  type ResultDef,
+  type LaunchCtx,
+} from "@/lib/rooms";
 
 // ---------------------------------------------------------------------------
 // Push resolved results to Rooms — the ONLY thing Rooms learns about a match
 // (Rooms/ROOMS-INTEGRATION.md §4). We send placement + rewards keyed by playerId,
 // and NEVER the pick. Signed with the single stable per-room key over the exact
 // raw body. Rooms mints once and dedups, so a retry can't double-grant.
+//
+// Two messages, both for ALL players:
+//   - pushClose(result)     → EVENT close, one per match. Rooms mints the event trophy.
+//   - pushSeriesClose(sref)  → SERIES close, once the whole series is decided. Rooms
+//                              mints the series trophy to whoever WE rank first; it
+//                              never re-derives the standing (the aggregation is ours).
 // ---------------------------------------------------------------------------
 
 type CloseResult = {
@@ -64,19 +80,86 @@ export async function pushClose(result: ResultDef): Promise<PushOutcome> {
   const sref = seriesForEvent(result.ref)?.ref ?? null;
 
   // Sign the EXACT bytes we send — Rooms recomputes the HMAC over the raw body.
-  // Points + placement + rewards keyed by playerId, plus the event ref so the host
-  // can attribute the board to the series and sum the aggregate. NEVER picks.
-  const body = JSON.stringify({ sref, ref: result.ref, roomId: ctx.roomId, results });
-  const sig = createHmac("sha256", key).update(body).digest("hex");
+  // The full board (every player) keyed by playerId, plus the event ref so the
+  // host anchors the per-event trophy on (sref, ref). NEVER picks.
+  const body = JSON.stringify({
+    type: "event-close",
+    roomId: ctx.roomId,
+    sref,
+    ref: result.ref,
+    trophyLabel: TROPHY_LABEL,
+    results,
+  });
+  return post(ctx.roomsHost, body, key);
+}
 
+// POST one signed message to Rooms' /close. Non-fatal: a network/host failure
+// returns ok:false so the operator can re-resolve to retry.
+async function post(roomsHost: string, body: string, key: string): Promise<PushOutcome> {
+  const sig = createHmac("sha256", key).update(body).digest("hex");
   try {
-    const res = await fetch(`${ctx.roomsHost.replace(/\/+$/, "")}/api/rooms/close`, {
+    const res = await fetch(`${roomsHost.replace(/\/+$/, "")}/api/rooms/close`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-rooms-signature": sig },
       body,
     });
     return { ok: res.ok, status: res.status };
   } catch {
-    return { ok: false }; // network/host down — admin can re-resolve to retry
+    return { ok: false };
   }
+}
+
+// SERIES close — fired once the whole series is decided. We compute OUR own
+// standing (the aggregation rule lives here, not in Rooms) and push it ranked;
+// the host mints the series trophy to placement 1 without re-deriving anything.
+export async function pushSeriesClose(sref: string): Promise<PushOutcome> {
+  const key = process.env.ROOMS_SIGNING_KEY;
+  if (!key) return { ok: false, skipped: "ROOMS_SIGNING_KEY not set" };
+
+  const series = getSeries(sref);
+  if (!series) return { ok: false, skipped: "unknown series" };
+
+  // The room is the authority on completion — only push when every event closed.
+  if ((await seriesPhase(sref)) !== "completed") return { ok: false, skipped: "series not complete" };
+
+  // Identify ourselves to Rooms via any member event's launch context.
+  let ctx: LaunchCtx | null = null;
+  for (const ref of series.eventRefs) {
+    ctx = await launchCtx(ref);
+    if (ctx) break;
+  }
+  if (!ctx) return { ok: false, skipped: "no launch context" };
+
+  // OUR aggregation rule: sum each player's per-event cascade points across the
+  // series. Kept here so it can change (weighting, drop-lowest, bonuses) without
+  // touching the host. A player who played one event still appears.
+  const totals = new Map<string, number>();
+  for (const ref of series.eventRefs) {
+    const result = await getResult(ref);
+    if (!result) continue;
+    for (const row of scorePicks(result, await listPicks(ref))) {
+      totals.set(row.playerId, (totals.get(row.playerId) ?? 0) + row.points);
+    }
+  }
+  if (totals.size === 0) return { ok: false, skipped: "no scores to report" };
+
+  // Standard competition ranking (ties share a rank; the next rank skips).
+  const ranked = Array.from(totals.entries()).sort((a, b) => b[1] - a[1]);
+  const standing: Array<{ playerId: string; points: number; placement: number }> = [];
+  let placement = 0, prev = Number.POSITIVE_INFINITY, seen = 0;
+  for (const [playerId, points] of ranked) {
+    seen++;
+    if (points < prev) { placement = seen; prev = points; }
+    standing.push({ playerId, points, placement });
+  }
+
+  const body = JSON.stringify({
+    type: "series-close",
+    roomId: ctx.roomId,
+    sref,
+    eventRefs: series.eventRefs,
+    trophyLabel: series.trophyLabel,
+    standing,
+  });
+  return post(ctx.roomsHost, body, key);
 }
