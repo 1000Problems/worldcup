@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { json } from "@/lib/http";
 import { sql, ensureSchema } from "@/lib/db";
 import { getChatSession } from "@/lib/chatSession";
+import { matchOnlineCount } from "@/lib/presence";
 
 export const dynamic = "force-dynamic";
 
@@ -41,10 +42,10 @@ export async function GET(req: NextRequest, { params }: { params: { ref: string 
       (reactions[key] ||= {})[r.emoji] = { count: r.count, mine: r.mine === true };
     }
 
-    const onlineRows = await db`
-      select count(*)::int as online from chat_presence
-      where match_ref = ${ref} and last_seen > now() - interval '30 seconds'`;
-    const online = (onlineRows as Array<{ online: number }>)[0]?.online ?? 0;
+    // Online count now comes from the unified presence table (worldcup_presence),
+    // written by the /presence/beat heartbeat — one source of truth shared with the
+    // lobby/match rails. The old chat_presence ping path is retired.
+    const online = await matchOnlineCount(ref);
 
     return json({ messages, reactions, online });
   } catch (e) {

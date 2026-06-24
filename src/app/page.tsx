@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import RoomClient from "./RoomClient";
+import { LobbyPresence } from "./PresenceRail";
 import { verifyRoomsSession } from "@/lib/roomsAuth";
 import { SESSION_COOKIE } from "@/lib/chatSession";
 import { listSeries, getMatch, phaseFor, getResult } from "@/lib/rooms";
@@ -35,7 +36,16 @@ export default async function Page({ searchParams }: { searchParams: SearchParam
   // cookie session (minted from the launch token by middleware) keeps the player
   // signed in across these same-origin `?ref=` links.
   if (!ref) {
-    return <Landing returnUrl={player?.returnUrl ?? null} />;
+    return (
+      <Landing
+        returnUrl={player?.returnUrl ?? null}
+        // Greeting + own-row highlight in the lobby rail. The dev stub (`?name=`)
+        // is shown but untrusted: it never registers presence server-side.
+        displayName={player?.displayName ?? one(searchParams.name)}
+        playerId={player?.playerId ?? null}
+        verified={!!player}
+      />
+    );
   }
 
   return (
@@ -94,7 +104,17 @@ function phaseChrome(phase: string) {
   return { pill: "Open", pillBg: GR.greenTint, pillCol: "#008A54", accent: GR.ink };
 }
 
-async function Landing({ returnUrl }: { returnUrl: string | null }) {
+async function Landing({
+  returnUrl,
+  displayName,
+  playerId,
+  verified,
+}: {
+  returnUrl: string | null;
+  displayName: string | null;
+  playerId: string | null;
+  verified: boolean;
+}) {
   // Pilot: one deployment, one series. List its events.
   const series = listSeries()[0] ?? null;
   const events = [];
@@ -115,7 +135,12 @@ async function Landing({ returnUrl }: { returnUrl: string | null }) {
   return (
     <div style={{ minHeight: "100vh", paddingBottom: 44 }}>
       <div style={{ height: 5, background: GR.red }} />
-      <div style={{ maxWidth: 720, margin: "0 auto", padding: "20px 18px 0" }}>
+      <div className="gr-lobby">
+        {/* LEFT RAIL — everyone in the room right now, picked or not. */}
+        <LobbyPresence seriesId={series?.ref ?? "world-cup-2026"} youId={verified ? playerId : null} />
+
+        {/* MAIN COLUMN — greeting, series hero, and the match selector. */}
+        <div>
         {/* HEADER — the same wordmark the room carries */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 28 }}>
           <div style={{ width: 44, height: 44, borderRadius: 11, background: GR.red, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 23, boxShadow: "0 4px 12px rgba(226,6,19,.32)" }}>⚽</div>
@@ -123,7 +148,9 @@ async function Landing({ returnUrl }: { returnUrl: string | null }) {
             <div style={{ fontFamily: GR.osw, fontWeight: 700, fontSize: 24, letterSpacing: ".01em", lineHeight: 0.95, textTransform: "uppercase" }}>
               GOAL<span style={{ color: GR.red }}>RUSH</span>
             </div>
-            <div style={{ fontSize: 11.5, fontWeight: 600, color: GR.mut, letterSpacing: ".02em", marginTop: 1 }}>Predict · banter · win the room</div>
+            <div style={{ fontSize: 11.5, fontWeight: 600, color: GR.mut, letterSpacing: ".02em", marginTop: 1 }}>
+              {displayName ? `Hello, ${displayName}${verified ? "" : " · guest"}` : "Predict · banter · win the room"}
+            </div>
           </div>
         </div>
 
@@ -233,6 +260,7 @@ async function Landing({ returnUrl }: { returnUrl: string | null }) {
             </a>
           </p>
         )}
+        </div>
       </div>
     </div>
   );

@@ -656,6 +656,23 @@ textarea {
   font-weight: 700;
 }
 
+/* Launch landing — lobby grid: roster rail beside the match list on wide, stacked
+   on narrow (the iframe can be slim). */
+.gr-lobby {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 18px;
+  max-width: 1060px;
+  margin: 0 auto;
+  padding: 20px 18px 0;
+}
+@media (min-width: 880px) {
+  .gr-lobby {
+    grid-template-columns: 264px minmax(0, 1fr);
+    align-items: start;
+  }
+}
+
 /* Launch landing — match cards lift on hover. */
 .gr-card {
   transition: transform 0.12s ease, box-shadow 0.12s ease;

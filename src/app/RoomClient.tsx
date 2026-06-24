@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import BanterBox from "./BanterBox";
+import PresenceRail, { useHeartbeat } from "./PresenceRail";
 
 const RED = "#E20613";
 const INK = "#15161A";
@@ -107,6 +108,10 @@ export default function RoomClient({ matchRef, player, returnUrl, devName, token
   const verified = !!player;
   const displayName = player?.displayName ?? devName ?? null;
   const playerId = player?.playerId ?? null;
+
+  // Register presence for this match (and, server-side, the room). No-ops without a
+  // verified session, so the dev stub watches the rail without joining it.
+  useHeartbeat(matchRef);
 
   const env = useMemo(() => {
     if (typeof window === "undefined") return { href: "", query: {} as Record<string, string>, referrer: "", inIframe: false };
@@ -403,7 +408,7 @@ export default function RoomClient({ matchRef, player, returnUrl, devName, token
                 GOAL<span style={{ color: RED }}>RUSH</span>
               </div>
               <div style={{ fontSize: 11.5, fontWeight: 600, color: MUT, letterSpacing: ".02em", marginTop: 1 }}>
-                {displayName ? `Playing as ${displayName}` : "Predict · banter · win the room"}
+                {displayName ? `Hello, ${displayName}${verified ? "" : " · guest"}` : "Predict · banter · win the room"}
               </div>
             </div>
           </div>
@@ -455,6 +460,11 @@ export default function RoomClient({ matchRef, player, returnUrl, devName, token
             })}
           </div>
         )}
+
+        {/* WHO'S IN THIS MATCH — everyone who entered Spain–Uruguay, picked or not. */}
+        <div style={{ marginBottom: 16 }}>
+          <PresenceRail scope="match" id={matchRef} title="In this match" everLabel="have joined this match" youId={verified ? playerId : null} compact />
+        </div>
 
         {error ? (
           <p style={{ textAlign: "center", color: MUT, padding: 40 }}>{error}</p>

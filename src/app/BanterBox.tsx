@@ -78,23 +78,20 @@ export default function BanterBox({ matchRef, canPost, playerId, height }: Props
     }
   }, [matchRef]);
 
-  // Poll + heartbeat, paused while the tab is hidden.
+  // Poll for messages, paused while the tab is hidden. Presence is no longer pinged
+  // here — RoomClient's /presence/beat heartbeat registers the player once and feeds
+  // both the rails and this column's online count.
   useEffect(() => {
     let pollT: ReturnType<typeof setInterval> | null = null;
-    let pingT: ReturnType<typeof setInterval> | null = null;
-    const ping = () => canPost && fetch(`/chat/${matchRef}/ping`, { method: "POST" }).catch(() => {});
 
     const start = () => {
       if (pollT) return;
       refresh();
-      ping();
       pollT = setInterval(refresh, 2000);
-      pingT = setInterval(ping, 20000);
     };
     const stop = () => {
       if (pollT) clearInterval(pollT);
-      if (pingT) clearInterval(pingT);
-      pollT = pingT = null;
+      pollT = null;
     };
     const onVis = () => (document.hidden ? stop() : start());
 
@@ -104,7 +101,7 @@ export default function BanterBox({ matchRef, canPost, playerId, height }: Props
       stop();
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [matchRef, canPost, refresh]);
+  }, [matchRef, refresh]);
 
   // Keep the transcript pinned to the bottom as new messages arrive.
   useEffect(() => {
