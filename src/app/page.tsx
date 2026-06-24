@@ -1,7 +1,6 @@
 import { cookies } from "next/headers";
 import RoomClient from "./RoomClient";
 import { verifyRoomsSession } from "@/lib/roomsAuth";
-import { isAsymConfigured, verifyLaunchAsym } from "@/lib/launchVerifyAsym";
 import { SESSION_COOKIE } from "@/lib/chatSession";
 import { listSeries, getMatch, phaseFor, getResult } from "@/lib/rooms";
 
@@ -18,19 +17,15 @@ function one(v: string | string[] | undefined): string | null {
 
 export default async function Page({ searchParams }: { searchParams: SearchParams }) {
   // Two distinct credentials:
-  //   - `?t=` is the LAUNCH token from Rooms — ES256/JWKS when configured (target),
-  //     HS256 shared key otherwise (interim). Present only on the launch request.
-  //   - the cookie is OUR room session (always HS256, minted by middleware), which
+  //   - `?t=` is the LAUNCH token from Rooms/PickCity — HS256, signed with our
+  //     ROOMS_SIGNING_KEY. Present only on the launch request. The host is HS256-
+  //     symmetric by design (no JWKS / ES256), so we verify it directly.
+  //   - the cookie is OUR room session (also HS256, minted by middleware), which
   //     keeps the player verified after the short launch ticket expires.
   const t = one(searchParams.t);
   const cookieTok = cookies().get(SESSION_COOKIE)?.value ?? null;
 
-  let player: SafePlayer = null;
-  if (t) {
-    player = isAsymConfigured() ? (await verifyLaunchAsym(t)).claims : verifyRoomsSession(t);
-  } else {
-    player = verifyRoomsSession(cookieTok); // room session
-  }
+  const player: SafePlayer = verifyRoomsSession(t ?? cookieTok);
 
   const token = t ?? cookieTok;
   const ref = one(searchParams.ref);
