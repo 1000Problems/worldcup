@@ -28,7 +28,11 @@ export function ensureSchema(): Promise<void> {
   if (_schemaReady) return _schemaReady;
   const db = sql();
   _schemaReady = (async () => {
-    await db`
+    // One HTTP round trip for all DDL (Neon batches the array as a single request),
+    // instead of six sequential trips gating the first read on every cold start.
+    // Order matters: chat_reaction references chat_message, so the table precedes it.
+    await db.transaction([
+      db`
       create table if not exists chat_message (
         id           bigserial primary key,
         match_ref    text        not null,
@@ -36,28 +40,28 @@ export function ensureSchema(): Promise<void> {
         display_name text        not null,
         body         text        not null check (char_length(body) <= 500),
         created_at   timestamptz not null default now()
-      )`;
-    await db`create index if not exists chat_message_ref_id on chat_message (match_ref, id)`;
-    await db`
+      )`,
+      db`create index if not exists chat_message_ref_id on chat_message (match_ref, id)`,
+      db`
       create table if not exists chat_reaction (
         message_id bigint not null references chat_message(id) on delete cascade,
         player_id  text   not null,
         emoji      text   not null,
         primary key (message_id, player_id, emoji)
-      )`;
-    await db`
+      )`,
+      db`
       create table if not exists chat_presence (
         match_ref text not null,
         player_id text not null,
         last_seen timestamptz not null default now(),
         primary key (match_ref, player_id)
-      )`;
-    // Roster presence — who is in the room (scope='series') and who is in a given
-    // match (scope='match'). Carries name + avatar so the lobby/match rails can show
-    // people, not just a count. Namespaced `worldcup_*` because this Neon is shared
-    // with other 1000Problems services. first_seen is write-once (the cumulative
-    // "ever played" anchor); last_seen is bumped every heartbeat (the liveness anchor).
-    await db`
+      )`,
+      // Roster presence — who is in the room (scope='series') and who is in a given
+      // match (scope='match'). Carries name + avatar so the lobby/match rails can show
+      // people, not just a count. Namespaced `worldcup_*` because this Neon is shared
+      // with other 1000Problems services. first_seen is write-once (the cumulative
+      // "ever played" anchor); last_seen is bumped every heartbeat (the liveness anchor).
+      db`
       create table if not exists worldcup_presence (
         scope        text        not null,
         scope_id     text        not null,
@@ -67,9 +71,10 @@ export function ensureSchema(): Promise<void> {
         first_seen   timestamptz not null default now(),
         last_seen    timestamptz not null default now(),
         primary key (scope, scope_id, player_id)
-      )`;
-    await db`create index if not exists worldcup_presence_scope_seen
-      on worldcup_presence (scope, scope_id, last_seen)`;
+      )`,
+      db`create index if not exists worldcup_presence_scope_seen
+      on worldcup_presence (scope, scope_id, last_seen)`,
+    ]);
   })().catch((e) => {
     // Reset so a transient failure doesn't permanently poison the cache.
     _schemaReady = null;

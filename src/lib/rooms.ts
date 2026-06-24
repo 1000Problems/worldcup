@@ -195,29 +195,73 @@ export function scorePicks(result: ResultDef, picks: PlayerPick[]): ScoreBreakdo
   });
 }
 
-// --- Pick store (ROOM-OWNED, private) ---------------------------------------
+// --- Rooms & pick store (ROOM-OWNED, private) -------------------------------
 // This room owns its picks. Rooms (the host) NEVER sees what a player predicted
 // — it only receives resolved results (placement + rewards) at /close. Picks are
 // captured server-side at lock-in (POST /pick, verified via the Rooms session
 // cookie so each pick is tied to a real Rooms identity) and scored locally by the
-// pure scorer. In-memory like the result store; swap for Neon/Vercel KV for
-// production durability.
+// pure scorer.
+//
+// PRIVATE GAMES: a private game is just another roomId over the same schedule, so
+// picks/leaderboard partition by roomId while the schedule and results stay shared
+// per series (sref). The worldcup_room registry (in store) is the authority on
+// which rooms exist over a series; /close fans out over it, one push per room.
 
-// Launch context, harvested from the verified session at pick time: who the room
-// is in Rooms (roomId) and where to POST results. The Rooms host is INFERRED from
-// the token's returnUrl origin — true today, not a value Rooms hands us explicitly.
-export type LaunchCtx = { roomId: string; roomsHost: string };
+export type RoomKind = "public" | "private";
 
-export function recordPick(ref: string, playerId: string, pick: Pick, ctx?: LaunchCtx): Promise<void> {
-  return store.savePick(ref, playerId, pick, ctx); // last write wins; finality enforced in /pick
+// A room of our game. `sref` is the series it plays (or the event ref itself for a
+// standalone match in no series). `roomsHost` is where to POST /close — inferred
+// from the launching player's returnUrl origin, not a value Rooms hands us.
+export interface RoomRecord {
+  roomId: string;
+  sref: string;
+  kind: RoomKind;
+  displayName?: string;
+  roomsHost?: string;
 }
 
-export function listPicks(ref: string): Promise<PlayerPick[]> {
-  return store.loadPicks(ref);
+export function recordPick(
+  roomId: string,
+  ref: string,
+  playerId: string,
+  pick: Pick,
+  roomsHost?: string,
+): Promise<void> {
+  return store.savePick(roomId, ref, playerId, pick, roomsHost); // last write wins; finality in /pick
 }
 
-export function launchCtx(ref: string): Promise<LaunchCtx | null> {
-  return store.loadCtx(ref);
+export function listPicks(roomId: string, ref: string): Promise<PlayerPick[]> {
+  return store.loadPicks(roomId, ref);
+}
+
+export function registerRoom(room: RoomRecord): Promise<void> {
+  return store.registerRoom(room);
+}
+
+export function getRoom(roomId: string): Promise<RoomRecord | null> {
+  return store.getRoom(roomId);
+}
+
+// Enumerate every room playing a series — the public room plus each private one.
+// Runs a one-time lazy backfill first so picks captured before the room registry
+// existed (the original public room) are enumerable for fan-out.
+export async function listRoomsForSeries(sref: string): Promise<RoomRecord[]> {
+  await backfillPublicRooms();
+  return store.listRoomsForSeries(sref);
+}
+
+// Picks captured before private rooms existed carry a room_id but no room row.
+// Register each as the public room (we own the ref→series mapping; store doesn't).
+// Idempotent and cheap; re-armed each cold start.
+let _backfilled = false;
+async function backfillPublicRooms(): Promise<void> {
+  if (_backfilled) return;
+  const legacy = await store.listUnregisteredPickRooms();
+  for (const r of legacy) {
+    const sref = seriesForEvent(r.ref)?.ref ?? r.ref;
+    await store.registerRoom({ roomId: r.roomId, sref, kind: "public", roomsHost: r.roomsHost ?? undefined });
+  }
+  _backfilled = true;
 }
 
 // --- Result store ----------------------------------------------------------

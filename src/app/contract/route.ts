@@ -35,6 +35,10 @@ export async function GET(req: NextRequest) {
     // This game also exposes a series the host can enumerate (GET /series). The
     // host sums per-event boards (pushed at /close) into the aggregate standing.
     series: { ref: "world-cup-2026", aggregation: "sum" },
+    // Private games: any unknown roomId that launches in becomes an isolated room
+    // over this same schedule. This flag is the ENTIRE handshake — it's what makes
+    // PickCity render the "Create private game" button (GAME-INTEGRATION-PRIVATE.md).
+    allowsPrivate: true,
     badgeCatalog: [{ code: "called-it", label: "Called It" }],
   });
 }

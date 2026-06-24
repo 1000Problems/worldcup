@@ -1,7 +1,17 @@
 import type { NextRequest } from "next/server";
 import { json, preflight } from "@/lib/http";
 import { getChatSession } from "@/lib/chatSession";
-import { getMatch, phaseFor, validatePick, recordPick, type Pick } from "@/lib/rooms";
+import {
+  getMatch,
+  phaseFor,
+  validatePick,
+  recordPick,
+  getRoom,
+  registerRoom,
+  listRoomsForSeries,
+  seriesForEvent,
+  type Pick,
+} from "@/lib/rooms";
 
 export const dynamic = "force-dynamic";
 
@@ -35,7 +45,31 @@ export async function POST(req: NextRequest) {
     /* returnUrl absent/malformed — ctx simply won't be recorded */
   }
 
-  await recordPick(m.ref, player.playerId, body.pick as Pick, { roomId: player.roomId, roomsHost });
+  // Lazy room creation: a private game never announces itself — we meet it the
+  // first time one of its members picks. Register an unseen roomId as an isolated
+  // room over this event's series (or the event ref itself if it's standalone).
+  // Classify public vs private: an explicit PUBLIC_ROOM_ID env wins; otherwise the
+  // first room to appear for a series is the public one, every later roomId private.
+  const sref = seriesForEvent(m.ref)?.ref ?? m.ref;
+  if (!(await getRoom(player.roomId))) {
+    const publicEnv = process.env.PUBLIC_ROOM_ID;
+    const kind = publicEnv
+      ? publicEnv === player.roomId
+        ? "public"
+        : "private"
+      : (await listRoomsForSeries(sref)).some((r) => r.kind === "public")
+        ? "private"
+        : "public";
+    await registerRoom({
+      roomId: player.roomId,
+      sref,
+      kind,
+      displayName: player.displayName,
+      roomsHost: roomsHost || undefined,
+    });
+  }
+
+  await recordPick(player.roomId, m.ref, player.playerId, body.pick as Pick, roomsHost || undefined);
   return json({ ok: true });
 }
 

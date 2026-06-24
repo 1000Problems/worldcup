@@ -91,25 +91,31 @@ export async function readPresence(scope: PresenceScope, scopeId: string): Promi
   await ensureSchema();
   const db = sql();
 
-  const rows = (await db`
+  // The roster and the counts are independent reads — fire them concurrently so the
+  // rail costs one Neon round trip, not two serialized ones.
+  const [rows, counts] = (await Promise.all([
+    db`
     select player_id, display_name, avatar_token, last_seen
     from worldcup_presence
     where scope = ${scope} and scope_id = ${scopeId}
       and last_seen > now() - ${`${ONLINE_WINDOW_SECONDS} seconds`}::interval
     order by last_seen desc
-    limit ${ONLINE_LIMIT}`) as Array<{
-    player_id: string;
-    display_name: string;
-    avatar_token: string | null;
-    last_seen: string;
-  }>;
-
-  const counts = (await db`
+    limit ${ONLINE_LIMIT}`,
+    db`
     select
       count(*) filter (where last_seen > now() - ${`${ONLINE_WINDOW_SECONDS} seconds`}::interval)::int as online,
       count(*)::int as ever
     from worldcup_presence
-    where scope = ${scope} and scope_id = ${scopeId}`) as Array<{ online: number; ever: number }>;
+    where scope = ${scope} and scope_id = ${scopeId}`,
+  ])) as [
+    Array<{
+      player_id: string;
+      display_name: string;
+      avatar_token: string | null;
+      last_seen: string;
+    }>,
+    Array<{ online: number; ever: number }>,
+  ];
 
   return {
     online: rows.map((r) => ({
